@@ -124,17 +124,58 @@ def webhook():
             "message": f"Internal server error: {e}"
         }), 500
 
-@app.route('/test', methods=['GET'])
-def test():
+@app.route('/test_signal', methods=['GET'])
+def test_signal():
     """Тестовый endpoint для проверки связи с Telegram"""
     try:
-        test_message = f"🧪 Test signal from FXWave Bridge\n⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n✅ System is operational"
+        test_message = "✅ FXWave Bridge работает идеально!\nТестовое сообщение прошло успешно 🚀"
         
-        sent_message = bot.send_photo(
+        sent_message = bot.send_message(
             chat_id=CHANNEL_ID,
-            photo=open('test_chart.png', 'rb') if os.path.exists('test_chart.png') else None,
-            caption=test_message
+            text=test_message
         )
+        
+        logging.info(f"✅ Test message sent successfully: {sent_message.message_id}")
+        return jsonify({
+            "status": "success",
+            "message": "Test signal sent to Telegram",
+            "message_id": sent_message.message_id,
+            "timestamp": datetime.now().isoformat()
+        }), 200
+        
+    except Exception as e:
+        logging.error(f"❌ Test signal failed: {e}")
+        return jsonify({
+            "status": "error",
+            "message": f"Test signal failed: {e}"
+        }), 500
+
+@app.route('/test', methods=['GET'])
+def test():
+    """Тестовый endpoint для проверки связи с Telegram с фото"""
+    try:
+        test_message = f"🧪 Test Premium Signal\n⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n✅ System is operational"
+        
+        # Пытаемся отправить с фото, если есть тестовое изображение
+        try:
+            if os.path.exists('test_chart.png'):
+                with open('test_chart.png', 'rb') as photo:
+                    sent_message = bot.send_photo(
+                        chat_id=CHANNEL_ID,
+                        photo=photo,
+                        caption=test_message
+                    )
+            else:
+                sent_message = bot.send_message(
+                    chat_id=CHANNEL_ID,
+                    text=test_message
+                )
+        except:
+            # Если не удалось с фото, отправляем просто текст
+            sent_message = bot.send_message(
+                chat_id=CHANNEL_ID,
+                text=test_message
+            )
         
         logging.info(f"✅ Test message sent successfully: {sent_message.message_id}")
         return jsonify({
@@ -187,6 +228,8 @@ def home():
             .status { color: #28a745; font-weight: bold; }
             .endpoints { margin-top: 20px; }
             .endpoint { background: #f8f9fa; padding: 10px; margin: 5px 0; border-left: 4px solid #007bff; }
+            .test-btn { background: #007bff; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; margin: 5px; }
+            .test-btn:hover { background: #0056b3; }
         </style>
     </head>
     <body>
@@ -204,7 +247,12 @@ def home():
                     <strong>GET /health</strong> - Проверка статуса системы
                 </div>
                 <div class="endpoint">
-                    <strong>GET /test</strong> - Тестовый сигнал в Telegram
+                    <strong>GET /test_signal</strong> - Тестовый сигнал в Telegram (простой)
+                    <button class="test-btn" onclick="testSignal()">Отправить тест</button>
+                </div>
+                <div class="endpoint">
+                    <strong>GET /test</strong> - Тестовый сигнал в Telegram (расширенный)
+                    <button class="test-btn" onclick="testExtended()">Отправить расширенный тест</button>
                 </div>
             </div>
             
@@ -213,6 +261,30 @@ def home():
                 <code>WebhookURL = "https://fxwave-signals-mt5.onrender.com/webhook"</code>
             </div>
         </div>
+
+        <script>
+            function testSignal() {
+                fetch('/test_signal')
+                    .then(response => response.json())
+                    .then(data => {
+                        alert('Тест отправлен! ID: ' + data.message_id);
+                    })
+                    .catch(error => {
+                        alert('Ошибка: ' + error);
+                    });
+            }
+
+            function testExtended() {
+                fetch('/test')
+                    .then(response => response.json())
+                    .then(data => {
+                        alert('Расширенный тест отправлен! ID: ' + data.test_message_id);
+                    })
+                    .catch(error => {
+                        alert('Ошибка: ' + error);
+                    });
+            }
+        </script>
     </body>
     </html>
     """
@@ -223,7 +295,7 @@ def not_found(error):
     return jsonify({
         "status": "error",
         "message": "Endpoint not found",
-        "available_endpoints": ["/webhook", "/health", "/test", "/"]
+        "available_endpoints": ["/webhook", "/health", "/test", "/test_signal", "/"]
     }), 404
 
 @app.errorhandler(500)
