@@ -191,6 +191,44 @@ def test():
             "message": f"Test failed: {e}"
         }), 500
 
+@app.route('/test_bot', methods=['GET'])
+def test_bot():
+    """Тест бота и канала"""
+    try:
+        # Проверяем, что бот работает
+        bot_info = bot.get_me()
+        
+        # Пробуем отправить тестовое сообщение
+        test_message = (
+            "🤖 Тест бота и канала\n\n"
+            "✅ Бот активен: @{}\n"
+            "📅 Время: {}\n"
+            "🚀 Система готова к работе!"
+        ).format(bot_info.username, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        
+        sent_message = bot.send_message(
+            chat_id=CHANNEL_ID,
+            text=test_message
+        )
+        
+        logging.info(f"✅ Test bot message sent: {sent_message.message_id}")
+        
+        return jsonify({
+            "status": "success",
+            "bot": bot_info.username,
+            "channel_id": CHANNEL_ID,
+            "message_id": sent_message.message_id,
+            "timestamp": datetime.now().isoformat()
+        }), 200
+        
+    except Exception as e:
+        logging.error(f"❌ Test bot failed: {e}")
+        return jsonify({
+            "status": "error",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }), 500
+        
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint для мониторинга"""
