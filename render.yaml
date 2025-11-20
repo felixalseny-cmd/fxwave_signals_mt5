@@ -6,3 +6,8 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
     autoDeploy: true
+    envVars:
+      - key: BOT_TOKEN
+        value: Y8526027334:AAEyG3eDapTodPcDY7mCSeskgpBY1PkoV1o
+      - key: CHANNEL_ID
+        value: -1001868323230
