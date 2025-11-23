@@ -1,13 +1,14 @@
 services:
   - type: web
-    name: fxwave_signals_mt5
+    name: fxwave-institutional-bridge
     env: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120 --workers 2
     autoDeploy: true
     envVars:
       - key: BOT_TOKEN
-        value: Y8526027334:AAEyG3eDapTodPcDY7mCSeskgpBY1PkoV1o
+        sync: false
       - key: CHANNEL_ID
-        value: -1001868323230
+        sync: false
+    healthCheckPath: /institutional/health
