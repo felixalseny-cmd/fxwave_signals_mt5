@@ -28,6 +28,7 @@ app = Flask(__name__)
 # =============================================================================
 class InstitutionalConfig:
     """Конфигурация для институциональных стандартов"""
+    
     MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB максимальный размер файла
     ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
     REQUEST_TIMEOUT = 30
@@ -45,9 +46,18 @@ class InstitutionalConfig:
         
         logger.info("✅ Environment validation passed")
 
+def check_environment():
+    """Проверка environment variables при запуске"""
+    required_vars = ['BOT_TOKEN', 'CHANNEL_ID']
+    for var in required_vars:
+        if not os.environ.get(var):
+            logger.critical(f"❌ MISSING ENVIRONMENT VARIABLE: {var}")
+            return False
+    logger.info("✅ All environment variables are set")
+    return True
+
 # Инициализация конфигурации
 config = InstitutionalConfig()
-config.validate_environment()
 
 # =============================================================================
 # ИНИЦИАЛИЗАЦИЯ ТЕЛЕГРАМ БОТА С ПРОФЕССИОНАЛЬНОЙ ОБРАБОТКОЙ ОШИБОК
@@ -672,6 +682,14 @@ def institutional_internal_error(error):
 # ИНИЦИАЛИЗАЦИЯ И ЗАПУСК ИНСТИТУЦИОНАЛЬНОГО СЕРВИСА
 # =============================================================================
 if __name__ == '__main__':
+    # Проверяем environment variables перед запуском
+    if not check_environment():
+        logger.critical("❌ CRITICAL: Environment validation failed. Shutting down.")
+        exit(1)
+    
+    # Валидируем конфигурацию
+    config.validate_environment()
+    
     # Записываем время старта для метрик uptime
     app.start_time = time.time()
     
@@ -683,7 +701,7 @@ if __name__ == '__main__':
     logger.info(f"🚀 Starting on port {port}")
     logger.info(f"📊 Environment: Production")
     logger.info(f"🔐 Compliance: MiFID II, ESG")
-    logger.info(f"🤖 Bot: {bot_info.username if 'bot_info' in locals() else 'Unknown'}")
+    logger.info(f"🤖 Bot: {bot_info.username}")
     logger.info(f"📈 Channel: {CHANNEL_ID}")
     
     # Профессиональный запуск для production
