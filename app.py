@@ -135,8 +135,19 @@ if not telegram_bot.bot:
 
 @app.route('/webhook', methods=['POST', 'GET'])
 def webhook():
-    """Основной webhook"""
+    """Основной webhook с расширенным логированием"""
+    
+    # Детальное логирование для отладки
+    logger.info("=== WEBHOOK REQUEST DEBUG ===")
+    logger.info(f"Method: {request.method}")
+    logger.info(f"Headers: {dict(request.headers)}")
+    logger.info(f"Content-Type: {request.content_type}")
+    logger.info(f"Form data: {dict(request.form)}")
+    logger.info(f"Files: {list(request.files.keys())}")
+    logger.info(f"Raw data (first 500 chars): {request.data[:500] if request.data else 'No data'}")
+    
     if request.method == 'GET':
+        logger.info("GET request to webhook - health check")
         return jsonify({
             "status": "active", 
             "service": "FXWave Signals",
@@ -144,17 +155,51 @@ def webhook():
         }), 200
     
     try:
+        # Проверяем, есть ли файл фото
         if 'photo' not in request.files:
-            return jsonify({"status": "error", "message": "No photo file"}), 400
+            logger.warning("❌ No photo file in request")
+            logger.info(f"Available files: {list(request.files.keys())}")
+            
+            # Проверяем, есть ли данные в form (текстовый режим)
+            caption = request.form.get('caption')
+            if caption:
+                logger.info("📝 Text-only mode detected, sending as message")
+                result = telegram_bot.send_message_safe(caption)
+                
+                if result['status'] == 'success':
+                    logger.info(f"✅ Text signal delivered: {result['message_id']}")
+                    return jsonify({
+                        "status": "success",
+                        "message_id": result['message_id'],
+                        "mode": "text_only",
+                        "timestamp": datetime.utcnow().isoformat() + 'Z'
+                    }), 200
+                else:
+                    logger.error(f"❌ Text signal failed: {result['message']}")
+                    return jsonify({
+                        "status": "error", 
+                        "message": result['message']
+                    }), 500
+            else:
+                return jsonify({"status": "error", "message": "No photo file and no caption"}), 400
         
         photo = request.files['photo']
-        caption = request.form.get('caption', 'No caption')
+        caption = request.form.get('caption', 'No caption provided')
+        
+        logger.info(f"📸 Photo file: {photo.filename}, size: {photo.content_length}")
+        logger.info(f"📝 Caption length: {len(caption)}")
         
         # Проверка файла
         if photo.filename == '':
+            logger.warning("❌ Empty filename")
             return jsonify({"status": "error", "message": "Empty filename"}), 400
         
+        if photo.content_length == 0:
+            logger.warning("❌ Empty file content")
+            return jsonify({"status": "error", "message": "Empty file content"}), 400
+        
         # Отправка в Telegram
+        logger.info("🔄 Sending photo to Telegram...")
         result = telegram_bot.send_photo_safe(photo, caption)
         
         if result['status'] == 'success':
@@ -172,10 +217,10 @@ def webhook():
             }), 500
             
     except Exception as e:
-        logger.error(f"💥 Webhook error: {e}")
+        logger.error(f"💥 Webhook error: {e}", exc_info=True)
         return jsonify({
             "status": "error",
-            "message": "Internal server error"
+            "message": f"Internal server error: {str(e)}"
         }), 500
 
 @app.route('/health', methods=['GET'])
