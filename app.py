@@ -7,6 +7,7 @@ import time
 import requests
 from threading import Thread
 import sys
+import re
 
 # =============================================================================
 # НАСТРОЙКА ПРОФЕССИОНАЛЬНОГО ЛОГИРОВАНИЯ
@@ -81,7 +82,7 @@ class RobustTelegramBot:
                 logger.error(f"❌ Telegram API Error (attempt {attempt + 1}): {error_msg}")
                 
                 if "invalid token" in error_msg.lower():
-                    logger.critical("💥 INVALID BOT TOKEN - Please check BOT_TOKEN environment variable")
+                    logger.critical("💥 INVALID BOT TOPORT - Please check BOT_TOKEN environment variable")
                     return False
                 elif "chat not found" in error_msg.lower():
                     logger.critical("💥 CHANNEL NOT FOUND - Check CHANNEL_ID and bot permissions")
@@ -130,6 +131,115 @@ if not telegram_bot.bot:
     sys.exit(1)
 
 # =============================================================================
+# ФУНКЦИИ ДЛЯ ОБРАБОТКИ И ФОРМАТИРОВАНИЯ СИГНАЛОВ
+# =============================================================================
+
+def format_institutional_signal(caption):
+    """Форматирование институционального сигнала в профессиональном стиле"""
+    
+    # Очистка от ?? и форматирование
+    cleaned_caption = re.sub(r'\?+', '', caption)
+    
+    # Парсинг основных компонентов сигнала
+    lines = cleaned_caption.split('\n')
+    formatted_lines = []
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+            
+        # Определение типа строки и форматирование
+        if 'BUY LIMIT' in line or 'SELL LIMIT' in line or 'BUY STOP' in line or 'SELL STOP' in line:
+            parts = line.split()
+            if len(parts) >= 2:
+                direction = '🟢' if 'BUY' in parts[0] else '🔴'
+                order_type = parts[0] + ' ' + parts[1]
+                symbol = parts[-1] if len(parts) > 2 else ''
+                formatted_lines.append(f"{direction} <b>{order_type} {symbol}</b>")
+                
+        elif 'INSTITUTIONAL SIGNAL' in line:
+            formatted_lines.append("🏛️ <b>INSTITUTIONAL TRADING DESK</b>")
+            formatted_lines.append("═" * 35)
+            
+        elif 'ENTRY:' in line:
+            price = extract_price(line)
+            formatted_lines.append(f"🎯 <b>ENTRY:</b> <code>{price}</code>")
+            
+        elif 'TAKE PROFIT:' in line:
+            price = extract_price(line)
+            formatted_lines.append(f"💰 <b>TAKE PROFIT:</b> <code>{price}</code>")
+            
+        elif 'STOP LOSS:' in line:
+            price = extract_price(line)
+            formatted_lines.append(f"🛡️ <b>STOP LOSS:</b> <code>{price}</code>")
+            
+        elif 'RISK MANAGEMENT:' in line:
+            formatted_lines.append("\n📊 <b>RISK MANAGEMENT</b>")
+            formatted_lines.append("─" * 25)
+            
+        elif 'Position:' in line:
+            lots = extract_value(line)
+            formatted_lines.append(f"• Position: <code>{lots}</code> lots")
+            
+        elif 'Risk:' in line:
+            risk = extract_value(line)
+            formatted_lines.append(f"• Risk: <code>{risk}</code>")
+            
+        elif 'R:R:' in line:
+            rr = extract_value(line)
+            formatted_lines.append(f"• R:R Ratio: <code>{rr}</code>")
+            
+        elif 'Risk Level:' in line:
+            level = extract_risk_level(line)
+            formatted_lines.append(f"• Risk Level: {level}")
+            
+        elif 'DESK COMMENT:' in line:
+            formatted_lines.append("\n💼 <b>ANALYTICAL OVERVIEW</b>")
+            formatted_lines.append("─" * 25)
+            
+        elif 'Strong rejection' in line or 'bullish' in line.lower() or 'bearish' in line.lower():
+            if line.startswith('_') and line.endswith('_'):
+                line = line[1:-1]  # Remove underscores
+            formatted_lines.append(f"<i>{line}</i>")
+            
+        elif 'Spread:' in line:
+            spread = extract_value(line)
+            formatted_lines.append(f"\n⚡ Spread: <code>{spread}</code> pips")
+            
+    # Добавляем хештеги и временную метку
+    symbol_match = re.search(r'\b[A-Z]{6}\b', caption)
+    symbol = symbol_match.group() if symbol_match else "FX"
+    
+    formatted_lines.append(f"\n#{symbol} #Institutional #Algorithmic")
+    formatted_lines.append(f"<i>Timestamp: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}</i>")
+    
+    return '\n'.join(formatted_lines)
+
+def extract_price(line):
+    """Извлечение цены из строки"""
+    price_match = re.search(r'`([\d.]+)`', line)
+    return price_match.group(1) if price_match else "N/A"
+
+def extract_value(line):
+    """Извлечение значения из строки"""
+    value_match = re.search(r'`([^`]+)`', line)
+    return value_match.group(1) if value_match else "N/A"
+
+def extract_risk_level(line):
+    """Извлечение и форматирование уровня риска"""
+    if 'LOW' in line:
+        return "🟢 LOW"
+    elif 'MEDIUM' in line:
+        return "🟡 MEDIUM"
+    elif 'HIGH' in line:
+        return "🟠 HIGH"
+    elif 'EXTREME' in line:
+        return "🔴 EXTREME"
+    else:
+        return "⚪ UNKNOWN"
+
+# =============================================================================
 # УПРОЩЕННЫЕ И НАДЕЖНЫЕ ROUTES
 # =============================================================================
 
@@ -163,11 +273,16 @@ def webhook():
             # Проверяем, есть ли данные в form (текстовый режим)
             caption = request.form.get('caption')
             if caption:
-                logger.info("📝 Text-only mode detected, sending as message")
-                result = telegram_bot.send_message_safe(caption)
+                logger.info("📝 Text-only mode detected, formatting institutional signal")
+                
+                # Форматируем сигнал в профессиональном стиле
+                formatted_signal = format_institutional_signal(caption)
+                logger.info(f"📊 Formatted signal:\n{formatted_signal}")
+                
+                result = telegram_bot.send_message_safe(formatted_signal)
                 
                 if result['status'] == 'success':
-                    logger.info(f"✅ Text signal delivered: {result['message_id']}")
+                    logger.info(f"✅ Institutional signal delivered: {result['message_id']}")
                     return jsonify({
                         "status": "success",
                         "message_id": result['message_id'],
@@ -175,7 +290,7 @@ def webhook():
                         "timestamp": datetime.utcnow().isoformat() + 'Z'
                     }), 200
                 else:
-                    logger.error(f"❌ Text signal failed: {result['message']}")
+                    logger.error(f"❌ Institutional signal failed: {result['message']}")
                     return jsonify({
                         "status": "error", 
                         "message": result['message']
@@ -198,9 +313,12 @@ def webhook():
             logger.warning("❌ Empty file content")
             return jsonify({"status": "error", "message": "Empty file content"}), 400
         
+        # Форматируем caption для фото
+        formatted_caption = format_institutional_signal(caption)
+        
         # Отправка в Telegram
         logger.info("🔄 Sending photo to Telegram...")
-        result = telegram_bot.send_photo_safe(photo, caption)
+        result = telegram_bot.send_photo_safe(photo, formatted_caption)
         
         if result['status'] == 'success':
             logger.info(f"✅ Signal delivered: {result['message_id']}")
@@ -249,25 +367,40 @@ def health():
 
 @app.route('/test', methods=['GET'])
 def test_signal():
-    """Упрощенный тестовый сигнал"""
+    """Тестовый институциональный сигнал"""
     try:
-        test_message = f"""
-✅ TEST SIGNAL - FXWave System
-⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}
+        test_signal_text = """
+🟢 BUY LIMIT EURUSD
+🏛️ INSTITUTIONAL TRADING DESK
+══════════════════════════════
 
-System Status: OPERATIONAL
-Connection: ACTIVE
-Ready for institutional signals.
+🎯 ENTRY: `1.15285`
+💰 TAKE PROFIT: `1.17000`
+🛡️ STOP LOSS: `1.15100`
 
-#Test #SystemOK
+📊 RISK MANAGEMENT
+─────────────────────────
+• Position: `0.22` lots
+• Risk: `$199.80`
+• R:R Ratio: `9.27:1`
+• Risk Level: 🟡 MEDIUM
+
+💼 ANALYTICAL OVERVIEW
+─────────────────────────
+<i>Strong rejection from weekly supply zone + bearish divergence. High-probability institutional setup.</i>
+
+⚡ Spread: `1.0` pips
+
+#EURUSD #Institutional #Algorithmic
+<i>Timestamp: 2025-11-24 13:15:00 UTC</i>
         """
         
-        result = telegram_bot.send_message_safe(test_message)
+        result = telegram_bot.send_message_safe(test_signal_text)
         
         if result['status'] == 'success':
             return jsonify({
                 "status": "success",
-                "message": "Test signal sent",
+                "message": "Institutional test signal sent",
                 "message_id": result['message_id']
             }), 200
         else:
@@ -288,32 +421,46 @@ def home():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>FXWave Signals</title>
+        <title>FXWave Institutional Signals</title>
         <style>
-            body { font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }
-            .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-            .status { padding: 10px; border-radius: 5px; margin: 10px 0; }
-            .healthy { background: #d4edda; color: #155724; }
-            .unhealthy { background: #f8d7da; color: #721c24; }
-            .btn { background: #007bff; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; margin: 5px; }
-            .btn:hover { background: #0056b3; }
+            body { font-family: 'Segoe UI', Arial, sans-serif; margin: 40px; background: #0f1b2d; color: #e0e0e0; }
+            .container { max-width: 800px; margin: 0 auto; background: #1a2b3e; padding: 30px; border-radius: 15px; box-shadow: 0 8px 32px rgba(0,0,0,0.3); border: 1px solid #2a4365; }
+            .status { padding: 15px; border-radius: 8px; margin: 15px 0; font-weight: bold; }
+            .healthy { background: #1e3a2e; color: #48bb78; border: 1px solid #2d7a4c; }
+            .unhealthy { background: #442727; color: #f56565; border: 1px solid #c53030; }
+            .btn { background: #2d7a4c; color: white; padding: 12px 24px; border: none; border-radius: 6px; cursor: pointer; margin: 8px; font-size: 14px; font-weight: 600; transition: all 0.3s; }
+            .btn:hover { background: #38a169; transform: translateY(-2px); }
+            .header { text-align: center; margin-bottom: 30px; }
+            .header h1 { color: #63b3ed; margin: 0; font-size: 2.5em; }
+            .header p { color: #90cdf4; font-size: 1.1em; }
+            .integration-box { margin-top: 25px; padding: 20px; background: #2d3748; border-radius: 8px; border-left: 4px solid #63b3ed; }
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>🚀 FXWave Signals Bridge</h1>
-            <div id="status" class="status">Checking system status...</div>
-            <p>Professional trading signals bridge for MetaTrader 5</p>
-            
-            <div>
-                <button class="btn" onclick="testHealth()">Check Health</button>
-                <button class="btn" onclick="testSignal()">Send Test</button>
-                <button class="btn" onclick="checkWebhook()">Test Webhook</button>
+            <div class="header">
+                <h1>🏛️ FXWave Institutional Desk</h1>
+                <p>Professional Trading Signals Infrastructure</p>
             </div>
             
-            <div style="margin-top: 20px; padding: 15px; background: #e7f3ff; border-radius: 5px;">
-                <h4>🔧 MT5 Integration:</h4>
-                <code>WebhookURL = "https://fxwave-signals-mt5.onrender.com/webhook"</code>
+            <div id="status" class="status">Checking system status...</div>
+            
+            <div style="text-align: center; margin: 25px 0;">
+                <button class="btn" onclick="testHealth()">System Health</button>
+                <button class="btn" onclick="testSignal()">Test Signal</button>
+                <button class="btn" onclick="checkWebhook()">Webhook Status</button>
+            </div>
+            
+            <div class="integration-box">
+                <h4>🔧 MT5 Institutional Integration</h4>
+                <code style="background: #1a202c; padding: 10px; border-radius: 4px; display: block; margin: 10px 0;">
+                    WebhookURL = "https://fxwave-signals-mt5.onrender.com/webhook"
+                </code>
+                <p style="color: #a0aec0; font-size: 0.9em;">
+                    • Professional signal formatting<br>
+                    • Fallback text mode support<br>
+                    • Institutional-grade infrastructure
+                </p>
             </div>
         </div>
 
@@ -324,9 +471,9 @@ def home():
                     const data = await response.json();
                     const statusDiv = document.getElementById('status');
                     statusDiv.className = data.status === 'healthy' ? 'status healthy' : 'status unhealthy';
-                    statusDiv.innerHTML = `Status: ${data.status.toUpperCase()} | Telegram: ${data.telegram}`;
+                    statusDiv.innerHTML = `🏥 System Status: ${data.status.toUpperCase()} | Telegram: ${data.telegram}`;
                 } catch (error) {
-                    document.getElementById('status').innerHTML = 'Status: ERROR - ' + error;
+                    document.getElementById('status').innerHTML = '❌ Status: ERROR - ' + error;
                 }
             }
 
@@ -334,7 +481,7 @@ def home():
                 try {
                     const response = await fetch('/test');
                     const data = await response.json();
-                    alert(data.status === 'success' ? '✅ Test sent!' : '❌ Error: ' + data.message);
+                    alert(data.status === 'success' ? '✅ Institutional test signal sent!' : '❌ Error: ' + data.message);
                 } catch (error) {
                     alert('Error: ' + error);
                 }
@@ -344,7 +491,7 @@ def home():
                 try {
                     const response = await fetch('/webhook');
                     const data = await response.json();
-                    alert('Webhook: ' + data.status);
+                    alert('🌐 Webhook Status: ' + data.status);
                 } catch (error) {
                     alert('Error: ' + error);
                 }
@@ -361,7 +508,7 @@ def home():
 # ЗАПУСК ПРИЛОЖЕНИЯ
 # =============================================================================
 if __name__ == '__main__':
-    logger.info("🚀 Starting FXWave Signals Bridge")
+    logger.info("🚀 Starting FXWave Institutional Signals Bridge")
     logger.info(f"🌐 URL: https://fxwave-signals-mt5.onrender.com")
     
     port = int(os.environ.get('PORT', 5000))
