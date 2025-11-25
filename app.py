@@ -133,23 +133,28 @@ class FinancialModelingPrep:
     def get_economic_calendar(symbol, days=7):
         """Get economic calendar events for specific symbol"""
         try:
+            # FIXED: Используем правильный endpoint и параметры
             url = f"https://financialmodelingprep.com/api/v3/economic_calendar"
             params = {
                 'apikey': FMP_API_KEY,
-                'from': datetime.now().strftime('%Y-%m-%d'),
+                'from': (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d'),
                 'to': (datetime.now() + timedelta(days=days)).strftime('%Y-%m-%d')
             }
             
             response = requests.get(url, params=params, timeout=10)
+            logger.info(f"FMP API Response Status: {response.status_code}")
+            
             if response.status_code == 200:
                 events = response.json()
-                
-                # Filter events relevant to the symbol
-                symbol_events = FinancialModelingPrep.filter_events_for_symbol(events, symbol)
-                return FinancialModelingPrep.format_calendar_events(symbol_events, symbol)
-                
+                if isinstance(events, list) and events:
+                    # Filter events relevant to the symbol
+                    symbol_events = FinancialModelingPrep.filter_events_for_symbol(events, symbol)
+                    return FinancialModelingPrep.format_calendar_events(symbol_events, symbol)
+                else:
+                    logger.warning("FMP API returned empty data")
+                    return FinancialModelingPrep.get_fallback_calendar(symbol)
             else:
-                logger.warning(f"FMP API error: {response.status_code}")
+                logger.warning(f"FMP API error: {response.status_code} - {response.text}")
                 return FinancialModelingPrep.get_fallback_calendar(symbol)
                 
         except Exception as e:
@@ -163,26 +168,29 @@ class FinancialModelingPrep:
             return []
             
         currency_pairs = {
-            'EURUSD': ['EUR', 'USD', 'EUROZONE'],
-            'GBPUSD': ['GBP', 'USD', 'UK'],
-            'USDJPY': ['USD', 'JPY', 'JAPAN'],
+            'EURUSD': ['EUR', 'USD', 'EUROZONE', 'EU'],
+            'GBPUSD': ['GBP', 'USD', 'UK', 'UNITED KINGDOM'],
+            'USDJPY': ['USD', 'JPY', 'JAPAN', 'JP'],
             'XAUUSD': ['USD', 'GOLD', 'XAU'],
-            'BTCUSD': ['USD', 'BTC', 'CRYPTO'],
-            'AUDUSD': ['AUD', 'USD', 'AUSTRALIA'],
-            'USDCAD': ['USD', 'CAD', 'CANADA'],
-            'USDCHF': ['USD', 'CHF', 'SWITZERLAND'],
-            'NZDUSD': ['NZD', 'USD', 'NEW ZEALAND']
+            'BTCUSD': ['USD', 'BTC', 'CRYPTO', 'BITCOIN'],
+            'AUDUSD': ['AUD', 'USD', 'AUSTRALIA', 'AU'],
+            'USDCAD': ['USD', 'CAD', 'CANADA', 'CA'],
+            'USDCHF': ['USD', 'CHF', 'SWITZERLAND', 'CH'],
+            'NZDUSD': ['NZD', 'USD', 'NEW ZEALAND', 'NZ']
         }
         
         relevant_currencies = currency_pairs.get(symbol, [])
         filtered_events = []
         
-        for event in events[:10]:  # Limit to first 10 events
-            if any(currency in str(event.get('country', '')).upper() for currency in relevant_currencies):
-                filtered_events.append(event)
-            elif any(currency in str(event.get('event', '')).upper() for currency in relevant_currencies):
-                filtered_events.append(event)
-            elif any(currency in str(event.get('currency', '')).upper() for currency in relevant_currencies):
+        for event in events[:15]:  # Check more events
+            event_country = str(event.get('country', '')).upper()
+            event_name = str(event.get('event', '')).upper()
+            event_currency = str(event.get('currency', '')).upper()
+            
+            # Check if event is relevant to symbol
+            if any(currency in event_country for currency in relevant_currencies) or \
+               any(currency in event_name for currency in relevant_currencies) or \
+               any(currency in event_currency for currency in relevant_currencies):
                 filtered_events.append(event)
         
         return filtered_events[:4]  # Return max 4 events
@@ -205,12 +213,12 @@ class FinancialModelingPrep:
                 event_date = datetime.strptime(date, '%Y-%m-%d %H:%M:%S')
                 date_str = event_date.strftime('%a %H:%M UTC')
             except:
-                date_str = date
+                date_str = "Today"
             
             # Impact emoji
             impact_emoji = "🟢" if impact == "LOW" else "🟡" if impact == "MEDIUM" else "🔴"
             
-            formatted_events.append(f"{impact_emoji} {event_name} ({country}) - {date_str}")
+            formatted_events.append(f"{impact_emoji} {event_name} - {date_str}")
         
         calendar_text = f"""
 📅 <b>ECONOMIC CALENDAR THIS WEEK</b>
@@ -564,6 +572,10 @@ def format_institutional_signal(parsed_data):
     # Expected profit calculation
     expected_profit = risk_amount * rr_ratio if rr_ratio > 0 else "N/A"
     
+    # FIXED: Исправлено форматирование для TP
+    tp_display = f"{tp:.5f}" if tp > 0 else "N/A"
+    expected_profit_display = f"${expected_profit:.2f}" if expected_profit != "N/A" else "N/A"
+    
     # Format the institutional signal
     signal = f"""
 {direction} <b>{symbol}</b>
@@ -573,7 +585,7 @@ def format_institutional_signal(parsed_data):
 🎯 <b>TRADING SETUP</b>
 ────────────────────────────
 • <b>ENTRY:</b> <code>{entry:.5f}</code>
-• <b>TAKE PROFIT:</b> <code>{tp:.5f if tp > 0 else 'N/A'}</code>
+• <b>TAKE PROFIT:</b> <code>{tp_display}</code>
 • <b>STOP LOSS:</b> <code>{sl:.5f}</code>
 
 📊 <b>RISK MANAGEMENT</b>
@@ -581,7 +593,7 @@ def format_institutional_signal(parsed_data):
 • <b>Position Size:</b> <code>{position_size:.2f} lots</code>
 • <b>Risk Exposure:</b> <code>${risk_amount:.2f}</code>
 • <b>Account Risk:</b> <code>{risk_data['account_risk']}%</code>
-• <b>Expected Profit:</b> <code>${expected_profit:.2f if expected_profit != 'N/A' else 'N/A'}</code>
+• <b>Expected Profit:</b> <code>{expected_profit_display}</code>
 • <b>R:R Ratio:</b> <code>{rr_ratio:.2f}:1</code>
 • <b>Risk Level:</b> {risk_data['emoji']} <b>{risk_data['level']}</b>
 
