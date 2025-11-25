@@ -27,6 +27,117 @@ logger = logging.getLogger('FXWave-PRO')
 app = Flask(__name__)
 
 # =============================================================================
+# ENVIRONMENT VALIDATION SCRIPT
+# =============================================================================
+
+def validate_environment():
+    """Enhanced environment validation for v2.0"""
+    required_vars = {
+        'BOT_TOKEN': 'Telegram Bot Token',
+        'CHANNEL_ID': 'Telegram Channel ID',
+        'FMP_API_KEY': 'Financial Modeling Prep API Key',
+        'SECRET_KEY': 'Flask Secret Key'
+    }
+    
+    optional_vars = {
+        'PORT': '10000',
+        'FLASK_ENV': 'production',
+        'LOG_LEVEL': 'INFO',
+        'MAX_RISK_PERCENT': '5.0',
+        'MIN_RR_RATIO': '1.40'
+    }
+    
+    missing_vars = []
+    config_status = {}
+    
+    # Check required variables
+    for var, description in required_vars.items():
+        value = os.environ.get(var)
+        if not value:
+            missing_vars.append(var)
+            config_status[var] = '❌ MISSING'
+        else:
+            masked_value = f"{'*' * 8}{value[-4:]}" if len(value) > 8 else "***"
+            config_status[var] = f'✅ {masked_value}'
+    
+    # Check optional variables
+    for var, default in optional_vars.items():
+        value = os.environ.get(var, default)
+        config_status[var] = f'✅ {value}'
+    
+    # Log configuration status
+    logger.info("=== ENVIRONMENT CONFIGURATION ===")
+    for var, status in config_status.items():
+        logger.info(f"{var}: {status}")
+    
+    if missing_vars:
+        logger.critical(f"❌ MISSING REQUIRED VARIABLES: {missing_vars}")
+        return False
+    
+    # Validate specific formats
+    try:
+        channel_id = os.environ.get('CHANNEL_ID')
+        if channel_id and not channel_id.startswith('-100'):
+            logger.warning("⚠️ CHANNEL_ID should start with '-100' for private channels")
+        
+        risk_percent = float(os.environ.get('MAX_RISK_PERCENT', '5.0'))
+        if risk_percent <= 0 or risk_percent > 50:
+            logger.warning("⚠️ MAX_RISK_PERCENT should be between 0.1 and 50.0")
+            
+    except ValueError as e:
+        logger.error(f"❌ Invalid numeric value in environment variables: {e}")
+        return False
+    
+    logger.info("✅ Environment validation successful")
+    return True
+
+def check_environment_setup():
+    """Comprehensive environment setup check"""
+    checks = {
+        'Telegram Bot': bool(os.environ.get('BOT_TOKEN')),
+        'Telegram Channel': bool(os.environ.get('CHANNEL_ID')),
+        'FMP API': bool(os.environ.get('FMP_API_KEY')),
+        'Flask Secret': bool(os.environ.get('SECRET_KEY'))
+    }
+    
+    logger.info("=== ENVIRONMENT SETUP CHECK ===")
+    for service, status in checks.items():
+        icon = "✅" if status else "❌"
+        logger.info(f"{icon} {service}: {'Configured' if status else 'Missing'}")
+    
+    return all(checks.values())
+
+# Call this during startup
+if check_environment_setup():
+    logger.info("🚀 FXWave Institutional Signals v2.0 - Environment Ready")
+else:
+    logger.error("💥 Environment configuration incomplete")
+
+# Для генерации безопасного SECRET_KEY
+import secrets
+secret_key = secrets.token_hex(32)
+print(f"SECRET_KEY={secret_key}")
+
+# Добавьте временный эндпоинт для получения ID канала
+@app.route('/get_channel_id', methods=['GET'])
+def get_channel_id():
+    """Helper endpoint to get channel ID"""
+    try:
+        # Send test message and get chat info
+        test_msg = telegram_bot.send_message_safe("Testing channel ID...")
+        if test_msg['status'] == 'success':
+            return jsonify({
+                "status": "success",
+                "channel_id": CHANNEL_ID,
+                "message": "Use this ID in your environment variables"
+            })
+    except Exception as e:
+        return jsonify({
+            "status": "error", 
+            "message": str(e)
+        })
+        
+# =============================================================================
 # ENVIRONMENT VALIDATION
 # =============================================================================
 def validate_environment():
