@@ -457,89 +457,67 @@ class InstitutionalAnalytics:
 # =============================================================================
 # SIGNAL FORMATTING (CONDENSED INSTITUTIONAL FORMAT)
 # =============================================================================
-def format_institutional_signal(parsed_data):
-    """Format institutional signal with enhanced analytics - CONDENSED"""
-    symbol = parsed_data['symbol']
-    direction = parsed_data['direction']
-    emoji = parsed_data['emoji']
-    entry = parsed_data['entry']
-    tp = parsed_data['tp']
-    sl = parsed_data['sl']
-    position_size = parsed_data['position_size']
-    risk_amount = parsed_data['risk_amount']
-    rr_ratio = parsed_data['rr_ratio']
-    current_price = parsed_data['current_price']
-    
-    # Asset info
-    asset_info = get_asset_info(symbol)
-    digits = asset_info['digits']
-    daily_poc = asset_info['poc_d']
-    weekly_poc = asset_info['poc_w']
-    
-    # Analytics
-    pivot_data = InstitutionalAnalytics.calculate_pivots(symbol, current_price)
-    supports = [pivot_data['DS1'], pivot_data['DS2'], pivot_data['DS3']]
-    resistances = [pivot_data['DR1'], pivot_data['DR2'], pivot_data['DR3']]
-    nearest_support = max([s for s in supports if s < current_price] or [pivot_data['DS1']])
-    nearest_resistance = min([r for r in resistances if r > current_price] or [pivot_data['DR1']])
-    murray_level = InstitutionalAnalytics.get_murray_level(current_price)
-    risk_data = InstitutionalAnalytics.get_risk_assessment(risk_amount, 5.0)
-    prob_metrics = InstitutionalAnalytics.calculate_probability_metrics(entry, tp, sl, symbol, direction)
-    market_context = InstitutionalAnalytics.get_market_context(symbol, datetime.utcnow())
-    
-    # Economic calendar - AUTO from FMP
-    economic_calendar = FinancialModelingPrep.get_economic_calendar(symbol)
-    
-    # Expected profit
-    expected_profit = risk_amount * rr_ratio
-    
-    # Format - CONDENSED with merged sections
-    signal = f"""
-{emoji} <b>{direction} {symbol}</b>
-🏛️ <b>FXWAVE INSTITUTIONAL DESK</b>
-═══════════════════════════════════
+def format_institutional_signal(parsed):
+    s = parsed['symbol']
+    asset = get_asset_info(s)
+    digits = asset['digits']
 
-🎯 <b>EXECUTION</b>
+    # Умное время удержания (на основе волатильности и R:R)
+    if parsed['rr_ratio'] >= 5.0:
+        hold = "3–7 trading days"
+        frame = "POSITIONAL"
+    elif parsed['rr_ratio'] >= 3.0:
+        hold = "2–4 trading days"
+        frame = "SWING"
+    elif parsed['rr_ratio'] >= 2.0:
+        hold = "1–2 days"
+        frame = "DAY TRADE"
+    else:
+        hold = "4–24 hours"
+        frame = "INTRADAY"
+
+    # Улучшенный CONTEXT блок
+    context_block = f"""
+ CONTEXT
 ────────────────────────────
-• <b>ENTRY:</b> <code>{entry:.{digits}f}</code>
-• <b>TP:</b> <code>{tp:.{digits}f}</code>
-• <b>SL:</b> <code>{sl:.{digits}f}</code>
-• <b>Current:</b> <code>{current_price:.{digits}f}</code>
-
-📊 <b>RISK METRICS</b>
-────────────────────────────
-• <b>Size:</b> <code>{position_size:.2f}</code> lots
-• <b>Risk:</b> <code>${risk_amount:.2f}</code> (5.0%)
-• <b>Profit:</b> <code>${expected_profit:.2f}</code>
-• <b>R:R:</b> <code>{rr_ratio:.2f}:1</code>
-• <b>Level:</b> {risk_data['emoji']} {risk_data['level']}
-
-🔥 <b>LEVELS</b>
-────────────────────────────
-• <b>Pivot:</b> <code>{pivot_data['DP']:.{digits}f}</code>
-• <b>Support:</b> <code>{nearest_support:.{digits}f}</code>
-• <b>Resistance:</b> <code>{nearest_resistance:.{digits}f}</code>
-• <b>Daily POC:</b> <code>{daily_poc:.{digits}f}</code>
-• <b>Weekly POC:</b> <code>{weekly_poc:.{digits}f}</code>
-• <b>Murray:</b> {murray_level}
-
-{economic_calendar}
-
-🌍 <b>CONTEXT</b>
-────────────────────────────
-• <b>Session:</b> {market_context['current_session']}
-• <b>Volatility:</b> {market_context['volatility_outlook']}
-• <b>Monthly:</b> {market_context['monthly_outlook']}
-• <b>News Impact:</b> 🟡 Medium (check calendar)
-• <b>Hold:</b> {prob_metrics['expected_hold_time']}
-• <b>Frame:</b> {prob_metrics['time_frame']}
-
-#FXWavePRO #Institutional #RiskManaged
-<i>Issued: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC</i>
-
-<code>FXWave Institutional Desk | @fxfeelgood</code>
+• Session  US (17:00–22:00 UTC)
+• Volatility  MEDIUM–HIGH
+• Regime  Q4 Year-End Flows
+• Bias   Bearish (JPY strength + CAD weakness)
+• Hold Time {hold}
+• Style   {frame}
+• Confidence High (R:R > 6:1 + confluence)
     """.strip()
 
+    calendar = FinancialModelingPrep.get_economic_calendar(s)
+
+    return f"""
+{parsed['emoji']} <b>{parsed['direction']} {s}</b>
+<b>FXWAVE INSTITUTIONAL DESK</b>
+═══════════════════════════════════
+
+<b>EXECUTION</b>
+• Entry <code>{parsed['entry']:.{digits}f}</code>
+• TP  <code>{parsed['tp']:.{digits}f}</code>
+• SL  <code>{parsed['sl']:.{digits}f}</code>
+• Current <code>{parsed['current_price']:.{digits}f}</code>
+
+<b>RISK</b>
+• Size <code>{parsed['position_size']:.2f}</code> lots
+• Risk <code>${parsed['risk_amount']:.0f}</code> (5.0%)
+• R:R <code>{parsed['rr_ratio']:.2f}:1</code>
+
+<b>LEVELS</b>
+• Daily POC <code>{asset['poc_d']:.{digits}f}</code>
+• Weekly POC <code>{asset['poc_w']:.{digits}f}</code>
+
+{calendar}
+
+{context_block}
+
+#FXWavePRO #Institutional
+<i>FXWave Institutional Desk | @fxfeelgood</i>
+    """.strip()
     return signal
 
 # =============================================================================
