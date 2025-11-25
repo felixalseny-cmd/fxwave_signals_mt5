@@ -164,7 +164,14 @@ def calculate_pivot_levels(symbol, price):
     digits = get_asset_info(symbol)["digits"]
     
     # Estimate daily range based on symbol type
-    range_est = 150 if "JPY" in symbol else 0.0150
+    if "JPY" in symbol:
+        range_est = 150
+    elif "XAU" in symbol:
+        range_est = 25
+    elif "BTC" in symbol:
+        range_est = 2500
+    else:
+        range_est = 0.0150
     
     return {
         "daily_pivot": round(d, digits),
@@ -269,9 +276,9 @@ class FinancialModelingPrep:
             formatted_events.append(f"{impact_emoji} {event_name} ({country}) - {date_str}")
         
         calendar_text = f"""
-📅 <b>ECONOMIC CALENDAR THIS WEEK (VERIFIED)</b>
+📅 ECONOMIC CALENDAR THIS WEEK (VERIFIED)
 ────────────────────────────
-{chr(10).join([f'• {event}' for event in formatted_events])}
+{chr(10).join([f'▪️ {event}' for event in formatted_events])}
         """.strip()
         
         return calendar_text
@@ -315,6 +322,12 @@ class FinancialModelingPrep:
                 "📊 Institutional Flow Data",
                 "💼 Macro Correlation Shifts",
                 "🌍 Market Sentiment"
+            ],
+            "NZDUSD": [
+                "🏛️ RBNZ Monetary Policy Statement",
+                "🏦 RBNZ Official Cash Rate Decision",  
+                "💼 NZ Quarterly GDP Release",
+                "🌍 Global Dairy Trade Price Index"
             ]
         }
         
@@ -326,23 +339,23 @@ class FinancialModelingPrep:
         ])
         
         return f"""
-📅 <b>ECONOMIC CALENDAR THIS WEEK (VERIFIED)</b>
+📅 ECONOMIC CALENDAR THIS WEEK (VERIFIED)
 ────────────────────────────
-• {events[0]}
-• {events[1]}
-• {events[2]} 
-• {events[3]}
+▪️ {events[0]}
+▪️ {events[1]}
+▪️ {events[2]} 
+▪️ {events[3]}
         """.strip()
 
 # =============================================================================
-# ROBUST SIGNAL PARSING (ENHANCED FROM APP1.TXT)
+# ENHANCED SIGNAL PARSING WITH MULTIPLE TP SUPPORT
 # =============================================================================
 def parse_signal(caption):
-    """Robust parser for MQL5 format - enhanced with app1.txt improvements"""
+    """Enhanced parser for MQL5 format with multiple TP support"""
     try:
         logger.info(f"Parsing caption: {caption[:500]}...")
         
-        # Clean text like in app1.txt
+        # Clean text
         text = re.sub(r'[^\w\s\.\:\$]', ' ', caption)
         text = re.sub(r'\s+', ' ', text).strip().upper()
 
@@ -362,32 +375,60 @@ def parse_signal(caption):
         direction = "LONG" if "BUY" in text else "SHORT" if "SELL" in text else "UNKNOWN"
         emoji = "▲" if direction == "LONG" else "▼" if direction == "SHORT" else "●"
 
-        # Extract prices with robust patterns
+        # Extract entry price
         def extract_price(pattern):
             m = re.search(pattern, text)
             return float(m.group(1)) if m else 0.0
 
         entry = extract_price(r'ENTRY[:\s]+([0-9.]+)')
-        tp = extract_price(r'TP[:\s]+([0-9.]+)') or extract_price(r'TAKE PROFIT[:\s]+([0-9.]+)')
+        
+        # Extract multiple TP levels
+        tp_patterns = [
+            r'TP[:\s]+([0-9.]+)',
+            r'TAKE PROFIT[:\s]+([0-9.]+)',
+            r'TP1[:\s]+([0-9.]+)',
+            r'TP2[:\s]+([0-9.]+)',
+            r'TP3[:\s]+([0-9.]+)'
+        ]
+        
+        tp_levels = []
+        for pattern in tp_patterns:
+            matches = re.findall(pattern, text)
+            for match in matches:
+                tp_value = float(match)
+                if tp_value > 0 and tp_value not in tp_levels:
+                    tp_levels.append(tp_value)
+        
+        # If no specific TP levels found, try to find any number after TP
+        if not tp_levels:
+            generic_tp_matches = re.findall(r'TP[:\s]*([0-9.]+)', text)
+            for match in generic_tp_matches:
+                tp_value = float(match)
+                if tp_value > 0 and tp_value not in tp_levels:
+                    tp_levels.append(tp_value)
+        
+        # Extract SL
         sl = extract_price(r'SL[:\s]+([0-9.]+)') or extract_price(r'STOP LOSS[:\s]+([0-9.]+)')
         
-        if not all([entry, tp, sl]):
+        if not all([entry, sl]) or not tp_levels:
             logger.error("Missing price data")
             return None
 
         # Extract position data with fallbacks
         position_size = extract_price(r'SIZE[:\s]+([0-9.]+)') or 3.0
         risk_amount = extract_price(r'RISK[:\s]+\$([0-9.]+)') or 600.0
-        rr_ratio = extract_price(r'RR[:\s]+([0-9.]+)') or 3.0
+        
+        # Calculate RR ratio based on first TP
+        rr_ratio = round(abs(tp_levels[0] - entry) / abs(entry - sl), 2) if sl != 0 else 0
 
-        logger.info(f"PARSED SUCCESS → {direction} {symbol} | Entry: {entry} | Lots: {position_size}")
+        logger.info(f"PARSED SUCCESS → {direction} {symbol} | Entry: {entry} | TP Levels: {tp_levels} | Lots: {position_size}")
 
         return {
             'symbol': symbol,
             'direction': direction,
             'emoji': emoji,
             'entry': entry,
-            'tp': tp,
+            'tp_levels': tp_levels,
             'sl': sl,
             'position_size': position_size,
             'risk_amount': risk_amount,
@@ -406,7 +447,7 @@ def parse_signal(caption):
 class InstitutionalAnalytics:
     @staticmethod
     def get_real_pivots(symbol, current_price):
-        """Fixed pivot calculation using real pivots from app1.txt"""
+        """Fixed pivot calculation using real pivots"""
         return calculate_pivot_levels(symbol, current_price)
     
     @staticmethod
@@ -422,8 +463,8 @@ class InstitutionalAnalytics:
             return {'level': 'EXTREME', 'emoji': '🔴', 'account_risk': risk_percent}
     
     @staticmethod
-    def calculate_probability_metrics(entry, tp, sl, symbol, direction):
-        """Probability scoring - simplified"""
+    def calculate_probability_metrics(entry, tp_levels, sl, symbol, direction):
+        """Probability scoring with multiple TP support"""
         if sl == 0:
             return {
                 'probability': 60,
@@ -432,9 +473,14 @@ class InstitutionalAnalytics:
                 'time_frame': "DAY TRADE",
                 'risk_adjusted_return': 1.0
             }
-            
-        rr = abs(tp - entry) / abs(entry - sl) if sl != 0 else 0
-        base_prob = 60 + (rr * 5)
+        
+        # Use first TP for RR calculation
+        first_tp = tp_levels[0] if tp_levels else entry
+        rr = abs(first_tp - entry) / abs(entry - sl) if sl != 0 else 0
+        
+        # Adjust probability based on number of TP levels
+        tp_bonus = len(tp_levels) * 2  # Bonus for multiple TP levels
+        base_prob = 60 + (rr * 5) + tp_bonus
         final_prob = min(85, max(50, base_prob))
         
         if final_prob >= 75:
@@ -490,10 +536,10 @@ class InstitutionalAnalytics:
         }
 
 # =============================================================================
-# ENHANCED SIGNAL FORMATTING WITH PROPER PIP CALCULATION
+# ENHANCED SIGNAL FORMATTING WITH MULTIPLE TP SUPPORT
 # =============================================================================
 def format_institutional_signal(parsed):
-    """Enhanced signal formatting with proper pip calculation"""
+    """Enhanced signal formatting with multiple TP support and professional emojis"""
     try:
         s = parsed['symbol']
         asset = get_asset_info(s)
@@ -501,19 +547,27 @@ def format_institutional_signal(parsed):
         pip = asset['pip']  # Proper pip value from config
         
         entry = parsed['entry']
-        tp = parsed['tp']
+        tp_levels = parsed['tp_levels']
         sl = parsed['sl']
         current = parsed['current_price']
 
-        # Calculate pips using proper pip values
-        pips_tp = int(round(abs(tp - entry) / pip))
+        # Build TP section with multiple levels
+        tp_section = ""
+        for i, tp in enumerate(tp_levels):
+            pips_tp = int(round(abs(tp - entry) / pip))
+            tp_label = f"TP{i+1}" if len(tp_levels) > 1 else "TP"
+            tp_section += f"▪️ {tp_label}  <code>{tp:.{digits}f}</code> (+{pips_tp} pips)\n"
+        
+        # Calculate pips for SL
         pips_sl = int(round(abs(sl - entry) / pip))
-        rr = round(pips_tp / pips_sl, 2) if pips_sl > 0 else 0
+        
+        # Calculate RR ratio based on first TP
+        rr = round(abs(tp_levels[0] - entry) / abs(entry - sl), 2) if sl != 0 else 0
 
-        # Smart hold time based on RR ratio
-        if rr >= 6.0:
+        # Smart hold time based on RR ratio and number of TP levels
+        if rr >= 6.0 or len(tp_levels) >= 3:
             hold, style = "4–10 trading days", "POSITIONAL"
-        elif rr >= 3.5:
+        elif rr >= 3.5 or len(tp_levels) >= 2:
             hold, style = "3–6 trading days", "SWING"
         elif rr >= 2.0:
             hold, style = "1–3 trading days", "DAY TRADE"
@@ -523,7 +577,7 @@ def format_institutional_signal(parsed):
         # Get real pivots and analytics
         piv = InstitutionalAnalytics.get_real_pivots(s, current)
         risk_data = InstitutionalAnalytics.get_risk_assessment(parsed['risk_amount'], 5.0)
-        prob_metrics = InstitutionalAnalytics.calculate_probability_metrics(entry, tp, sl, s, parsed['direction'])
+        prob_metrics = InstitutionalAnalytics.calculate_probability_metrics(entry, tp_levels, sl, s, parsed['direction'])
         market_context = InstitutionalAnalytics.get_market_context(s, datetime.utcnow())
 
         # Market regime
@@ -538,41 +592,40 @@ def format_institutional_signal(parsed):
         regime = regime_map.get(s, "Institutional Order Flow Dominance")
 
         signal = f"""
-{parsed['emoji']} <b>{parsed['direction']} {s}</b>
-<b>FXWAVE INSTITUTIONAL DESK</b>
+{parsed['emoji']} {parsed['direction']} {s} 
+🏛️ FXWAVE INSTITUTIONAL DESK
 ═══════════════════════════════════
 
-<b>EXECUTION</b>
-• Entry <code>{entry:.{digits}f}</code>
-• TP  <code>{tp:.{digits}f}</code> (+{pips_tp} pips)
-• SL  <code>{sl:.{digits}f}</code> ({pips_sl} pips)
-• Current <code>{current:.{digits}f}</code>
+🎯 EXECUTION
+▪️ Entry <code>{entry:.{digits}f}</code>
+{tp_section}▪️ SL  <code>{sl:.{digits}f}</code> ({pips_sl} pips)
+▪️ Current <code>{current:.{digits}f}</code>
 
-<b>RISK PROFILE</b>
-• Size  <code>{parsed['position_size']:.2f}</code> lots
-• Risk  <code>${parsed['risk_amount']:.0f}</code> (5.0% free margin)
-• R:R  <code>{rr}:1</code>
-• Risk Level {risk_data['emoji']} {risk_data['level']}
+⚡ RISK MANAGEMENT
+▪️ Size  <code>{parsed['position_size']:.2f}</code> lots
+▪️ Risk  <code>${parsed['risk_amount']:.0f}</code> (5.0% free margin)
+▪️ R:R  <code>{rr}:1</code>
+▪️ Risk Level {risk_data['emoji']} {risk_data['level']}
 
-<b>INSTITUTIONAL LEVELS</b>
-• Daily Pivot <code>{piv['daily_pivot']:.{digits}f}</code>
-• R1 <code>{piv['R1']:.{digits}f}</code> | S1 <code>{piv['S1']:.{digits}f}</code>
-• R2 <code>{piv['R2']:.{digits}f}</code> | S2 <code>{piv['S2']:.{digits}f}</code>  
-• Weekly Pivot <code>{piv['weekly_pivot']:.{digits}f}</code>
-• Monthly Pivot <code>{piv['monthly_pivot']:.{digits}f}</code>
+📈 PRICE LEVELS
+▪️ Daily Pivot <code>{piv['daily_pivot']:.{digits}f}</code>
+▪️ R1 <code>{piv['R1']:.{digits}f}</code> | S1 <code>{piv['S1']:.{digits}f}</code>
+▪️ R2 <code>{piv['R2']:.{digits}f}</code> | S2 <code>{piv['S2']:.{digits}f}</code>  
+▪️ Weekly Pivot <code>{piv['weekly_pivot']:.{digits}f}</code>
+▪️ Monthly Pivot <code>{piv['monthly_pivot']:.{digits}f}</code>
 
 {FinancialModelingPrep.get_economic_calendar(s)}
 
-<b>MARKET CONTEXT</b>
-• Session {market_context['current_session']}
-• Volatility {market_context['volatility_outlook']}
-• Regime {regime}
-• Hold Time {hold}
-• Style {style}
-• Confidence {prob_metrics['confidence_level']}
+🌊 MARKET REGIME
+▪️ Session {market_context['current_session']}
+▪️ Volatility {market_context['volatility_outlook']}
+▪️ Regime {regime}
+▪️ Hold Time {hold}
+▪️ Style {style}
+▪️ Confidence {prob_metrics['confidence_level']}
 
-#FXWavePRO #Institutional #Tier1
-<i>FXWave Institutional Desk | @fxfeelgood</i>
+#FXWavePRO #Institutional
+<i>FXWave Institutional Desk | @fxfeelgood</i> 💎
 <i>Signal generated: {datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UTC</i>
         """.strip()
 
@@ -583,12 +636,12 @@ def format_institutional_signal(parsed):
         return f"Error formatting signal: {str(e)}"
 
 # =============================================================================
-# WEBHOOK ROUTES (FIXED)
+# WEBHOOK ROUTES
 # =============================================================================
 
 @app.route('/webhook', methods=['POST', 'GET'])
 def webhook():
-    """Fixed webhook handler"""
+    """Enhanced webhook handler with multiple TP support"""
     
     logger.info("=== INSTITUTIONAL WEBHOOK REQUEST ===")
     
@@ -619,7 +672,7 @@ def webhook():
                     }), 400
                 
                 formatted_signal = format_institutional_signal(parsed_data)
-                logger.info(f"Institutional signal formatted for {parsed_data['symbol']}")
+                logger.info(f"Institutional signal formatted for {parsed_data['symbol']} with {len(parsed_data['tp_levels'])} TP levels")
                 
                 result = telegram_bot.send_message_safe(formatted_signal)
                 
@@ -629,6 +682,7 @@ def webhook():
                         "status": "success",
                         "message_id": result['message_id'],
                         "symbol": parsed_data['symbol'],
+                        "tp_levels": len(parsed_data['tp_levels']),
                         "mode": "institutional_text",
                         "timestamp": datetime.utcnow().isoformat() + 'Z'
                     }), 200
@@ -659,6 +713,7 @@ def webhook():
                 "status": "success",
                 "message_id": result['message_id'],
                 "symbol": parsed_data['symbol'],
+                "tp_levels": len(parsed_data['tp_levels']),
                 "timestamp": datetime.utcnow().isoformat() + 'Z'
             }), 200
         else:
@@ -704,24 +759,25 @@ def health():
 
 @app.route('/test-signal', methods=['GET'])
 def test_institutional_signal():
-    """Test institutional signal"""
+    """Test institutional signal with multiple TP"""
     try:
         test_caption = """
-▲ LONG CADJPY
+▲ LONG NZDUSD
 FXWAVE INSTITUTIONAL DESK
 ═══════════════════════════════════
 
-ENTRY: `110.940`
-TAKE PROFIT: `109.852` 
-STOP LOSS: `111.233`
+ENTRY: `0.56110`
+TP1: `0.57180`
+TP2: `0.57550` 
+STOP LOSS: `0.55810`
 
 RISK & REWARD
 ────────────────────────────
-• Position Size: `0.67` lots
-• Risk Exposure: `$125.79`
+• Position Size: `3.50` lots
+• Risk Exposure: `$475`
 • Account Risk: `5.0%`
-• R:R Ratio: `3.71:1`
-• Risk Level: MEDIUM
+• R:R Ratio: `3.57:1`
+• Risk Level: HIGH
         """
         
         parsed_data = parse_signal(test_caption)
@@ -737,7 +793,8 @@ RISK & REWARD
                 "status": "success",
                 "message": "Institutional test signal sent",
                 "message_id": result['message_id'],
-                "symbol": "CADJPY"
+                "symbol": "NZDUSD",
+                "tp_levels": len(parsed_data['tp_levels'])
             }), 200
         else:
             return jsonify({
@@ -761,6 +818,7 @@ def home():
 if __name__ == '__main__':
     logger.info("Starting FXWave Institutional Signals Bridge v3.0")
     logger.info("Enhanced Institutional Analytics: ACTIVATED")
+    logger.info("Multiple TP Support: ENABLED")
     logger.info("Asset-Specific Configuration: LOADED")
     logger.info(f"Configured Assets: {len(ASSET_CONFIG)} symbols")
     
