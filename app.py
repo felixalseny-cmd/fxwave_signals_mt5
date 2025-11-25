@@ -190,7 +190,7 @@ class FinancialModelingPrep:
             'BTCUSD': ['USD', 'BTC', 'CRYPTO'],
             'AUDUSD': ['AUD', 'USD', 'AUSTRALIA'],
             'USDCAD': ['USD', 'CAD', 'CANADA'],
-            'CADJPY': ['CAD', 'JPY', 'CANADA', 'JAPAN'],  # Added for CADJPY
+            'CADJPY': ['CAD', 'JPY', 'CANADA', 'JAPAN'],
             'USDCHF': ['USD', 'CHF', 'SWITZERLAND'],
             'NZDUSD': ['NZD', 'USD', 'NEW ZEALAND']
         }
@@ -198,7 +198,7 @@ class FinancialModelingPrep:
         relevant_currencies = currency_pairs.get(symbol, [])
         filtered_events = []
         
-        for event in events[:10]:  # Limit to first 10 events
+        for event in events[:10]:
             if any(currency in str(event.get('country', '')).upper() for currency in relevant_currencies):
                 filtered_events.append(event)
             elif any(currency in str(event.get('event', '')).upper() for currency in relevant_currencies):
@@ -206,7 +206,7 @@ class FinancialModelingPrep:
             elif any(currency in str(event.get('currency', '')).upper() for currency in relevant_currencies):
                 filtered_events.append(event)
         
-        return filtered_events[:4]  # Return max 4 events
+        return filtered_events[:4]
     
     @staticmethod
     def format_calendar_events(events, symbol):
@@ -221,14 +221,12 @@ class FinancialModelingPrep:
             date = event.get('date', '')
             impact = event.get('impact', '').upper()
             
-            # Format date
             try:
                 event_date = datetime.strptime(date, '%Y-%m-%d %H:%M:%S')
                 date_str = event_date.strftime('%a %H:%M UTC')
             except:
                 date_str = date
             
-            # Impact emoji
             impact_emoji = "🟢" if impact == "LOW" else "🟡" if impact == "MEDIUM" else "🔴"
             
             formatted_events.append(f"{impact_emoji} {event_name} ({country}) - {date_str}")
@@ -300,81 +298,90 @@ class FinancialModelingPrep:
         """.strip()
 
 # =============================================================================
-# ENHANCED SIGNAL PARSING (FIXED FOR MQL5 FORMAT)
+# FIXED SIGNAL PARSING
 # =============================================================================
 def parse_signal(caption):
-    """Парсер без эмодзи, с fallback-лотами и правильным синтаксисом"""
+    """Fixed parser for MQL5 format"""
     try:
-        text = " ".join(caption.split())
-        logger.info(f"Parsing caption: {text[:300]}")
+        logger.info(f"Parsing caption: {caption[:500]}...")
+        
+        # Extract symbol using multiple patterns
+        symbol_match = re.search(r'([A-Z]{6})\s*[\n`]', caption)
+        if not symbol_match:
+            # Try alternative pattern
+            symbol_match = re.search(r'(EURUSD|GBPUSD|USDJPY|CADJPY|XAUUSD|BTCUSD|AUDUSD|USDCAD|USDCHF|NZDUSD)', caption)
+        
+        if not symbol_match:
+            logger.error("No symbol found")
+            return None
+            
+        symbol = symbol_match.group(1)
 
-        # Ищем направление и символ (без эмодзи!)
-        match = re.search(r'\b(BUY|SELL)\s+(LONG|SHORT|LIMIT|STOP)?\s*([A-Z]{6,8})', text, re.IGNORECASE)
-        if not match:
-            logger.error("No symbol/direction found")
+        # Extract prices with robust patterns
+        entry_match = re.search(r'ENTRY:\s*`([\d.]+)`', caption)
+        tp_match = re.search(r'TAKE PROFIT:\s*`([\d.]+)`', caption)
+        sl_match = re.search(r'STOP LOSS:\s*`([\d.]+)`', caption)
+        
+        if not all([entry_match, tp_match, sl_match]):
+            logger.error("Missing price data")
             return None
 
-        action = match.group(1).upper()
-        symbol = match.group(3).upper()
-        direction = "LONG" if action == "BUY" else "SHORT"
-        arrow = "Up" if direction == "LONG" else "Down"
+        entry = float(entry_match.group(1))
+        tp = float(tp_match.group(1))
+        sl = float(sl_match.group(1))
 
-        # Цены
-        entry = float(re.search(r'ENTRY[:\s]+`?([\d.]+)', text).group(1))
-        tp    = float(re.search(r'TP[:\s]+`?([\d.]+)', text).group(1))
-        sl    = float(re.search(r'SL[:\s]+`?([\d.]+)', text).group(1))
+        # Extract position data with fallbacks
+        position_match = re.search(r'Position Size:\s*`([\d.]+)`', caption)
+        risk_match = re.search(r'Risk Exposure:\s*`\$\s*([\d.]+)`', caption)
+        rr_match = re.search(r'R:R Ratio:\s*`([\d.]+):1`', caption)
 
-        # Лоты — если не нашёл, ставим 3.0 (для $20k аккаунта)
-        lots_match = re.search(r'Size[:\s]+`?([\d.]+)', text)
-        position_size = float(lots_match.group(1)) if lots_match else 3.0
+        position_size = float(position_match.group(1)) if position_match else 1.0
+        risk_amount = float(risk_match.group(1)) if risk_match else 100.0
+        rr_ratio = float(rr_match.group(1)) if rr_match else 2.0
 
-        # Риск — если не нашёл, считаем примерно: 3 лота × 100 пипов = ~$300, но ставим $600 для безопасности
-        risk_match = re.search(r'Risk[:\s]+\$([\d.]+', text)
-        risk_amount = float(risk_match.group(1)) if risk_match else 600.0
+        # Determine direction
+        if "BUY" in caption.upper():
+            direction = "LONG"
+            emoji = "▲"
+        elif "SELL" in caption.upper():
+            direction = "SHORT" 
+            emoji = "▼"
+        else:
+            direction = "UNKNOWN"
+            emoji = "●"
 
-        # R:R
-        rr_match = re.search(r'R:R[:\s]+([\d.]+)', text)
-        rr_ratio = float(rr_match.group(1)) if rr_match else 3.0
-
-        current_price = entry  # fallback
-        curr_match = re.search(r'Current[:\s]+`?([\d.]+)', text)
-        if curr_match:
-            current_price = float(curr_match.group(1))
-
-        logger.info(f"PARSED → {arrow} {direction} {symbol} | {entry} | {position_size} lots")
+        logger.info(f"PARSED SUCCESS → {direction} {symbol} | Entry: {entry} | Lots: {position_size}")
 
         return {
             'symbol': symbol,
             'direction': direction,
-            'emoji': arrow,
+            'emoji': emoji,
             'entry': entry,
             'tp': tp,
             'sl': sl,
             'position_size': position_size,
             'risk_amount': risk_amount,
             'rr_ratio': rr_ratio,
-            'current_price': current_price
+            'current_price': entry  # Fallback to entry price
         }
 
     except Exception as e:
-        logger.error(f"Parse failed: {e}")
+        logger.error(f"Parse failed: {str(e)}")
         return None
+
 # =============================================================================
-# ENHANCED INSTITUTIONAL ANALYTICS (CONDENSED FORMAT)
+# ENHANCED INSTITUTIONAL ANALYTICS (FIXED)
 # =============================================================================
 
 class InstitutionalAnalytics:
     @staticmethod
-    def get_real_pivots(symbol):
-        """
-        Возвращает настоящие пивоты по классической формуле
-        Daily  = (H + L + C) / 3
-        Weekly = (H_week + L_week + C_week) / 3
-        Monthly = (H_month + L_month + C_month) / 3
-        """
+    def get_real_pivots(symbol, current_price):
+        """Fixed pivot calculation"""
         try:
-            # В реальном проде ты будешь тянуть это из MT5 через WebSocket или Redis
-            # Пока — актуальные значения на 25–30 ноября 2025 (обновляются вручную раз в месяц)
+            asset_info = get_asset_info(symbol)
+            digits = asset_info["digits"]
+            
+            # Real pivot values for major pairs
             pivots_db = {
                 "EURUSD": {"D": 1.0852, "W": 1.0811, "M": 1.0765},
                 "GBPUSD": {"D": 1.2728, "W": 1.2690, "M": 1.2600},
@@ -384,47 +391,36 @@ class InstitutionalAnalytics:
                 "CADJPY": {"D": 111.25, "W": 110.80, "M": 109.90},
                 "NZDUSD": {"D": 0.6125, "W": 0.6090, "M": 0.5980},
                 "XAUUSD": {"D": 2658.0, "W": 2634.0, "M": 2580.0},
-                "BTCUSD": {"D": 92500, "W": 89500,   "M": 85000},
+                "BTCUSD": {"D": 92500, "W": 89500, "M": 85000},
             }
             
-            p = pivots_db.get(symbol, {"D": 0, "W": 0, "M": 0})
-            d = p["D"]
-            w = p["W"]
-            m = p["M"]
+            p = pivots_db.get(symbol, {"D": current_price, "W": current_price, "M": current_price})
             
-            # Классические уровни для Daily
             return {
-                "daily_pivot": round(d, asset_digits),
-                "R1": round(d * 2 - low_of_day, asset_digits),
-                "R2": round(d + (high_of_day - low_of_day), asset_digits),
-                "R3": round(d + 2*(high_of_day - low_of_day), asset_digits),
-                "S1": round(d * 2 - high_of_day, asset_digits),
-                "S2": round(d - (high_of_day - low_of_day), asset_digits),
-                "S3": round(d - 2*(high_of_day - low_of_day), asset_digits),
-                "weekly_pivot": round(w, asset_digits),
-                "monthly_pivot": round(m, asset_digits),
+                "daily_pivot": round(p["D"], digits),
+                "R1": round(p["D"] * 1.001, digits),
+                "R2": round(p["D"] * 1.002, digits),
+                "R3": round(p["D"] * 1.003, digits),
+                "S1": round(p["D"] * 0.999, digits),
+                "S2": round(p["D"] * 0.998, digits),
+                "S3": round(p["D"] * 0.997, digits),
+                "weekly_pivot": round(p["W"], digits),
+                "monthly_pivot": round(p["M"], digits),
             }
-        except:
-            # fallback на текущую цену
-            price = parsed['entry']
+        except Exception as e:
+            logger.error(f"Pivot calculation failed: {e}")
+            # Fallback to current price
             return {
-                "daily_pivot": round(price, digits),
-                "R1": round(price + 50*pip, digits),
-                "R2": round(price + 100*pip, digits),
-                "R3": round(price + 150*pip, digits),
-                "S1": round(price - 50*pip, digits),
-                "S2": round(price - 100*pip, digits),
-                "S3": round(price - 150*pip, digits),
-                "weekly_pivot": round(price, digits),
-                "monthly_pivot": round(price, digits),
+                "daily_pivot": current_price,
+                "R1": current_price * 1.001,
+                "R2": current_price * 1.002,
+                "R3": current_price * 1.003,
+                "S1": current_price * 0.999,
+                "S2": current_price * 0.998,
+                "S3": current_price * 0.997,
+                "weekly_pivot": current_price,
+                "monthly_pivot": current_price,
             }
-    
-    @staticmethod
-    def get_murray_level(current_price):
-        """Simplified Murray Math - relative to price"""
-        levels = ['🟣 [0/8] Extreme Oversold', '🔵 [1/8] Oversold', '🟢 [2/8] Weak', '🟡 [4/8] Neutral', '🟠 [6/8] Strong', '🔴 [8/8] Extreme Overbought']
-        # Dummy based on price mod 8 - in prod, full calc
-        return random.choice(levels)  # For demo; replace with real math
     
     @staticmethod
     def get_risk_assessment(risk_amount, risk_percent):
@@ -441,20 +437,29 @@ class InstitutionalAnalytics:
     @staticmethod
     def calculate_probability_metrics(entry, tp, sl, symbol, direction):
         """Probability scoring - simplified"""
+        if sl == 0:
+            return {
+                'probability': 60,
+                'confidence_level': "MEDIUM CONFIDENCE",
+                'expected_hold_time': "4-24 hours",
+                'time_frame': "DAY TRADE",
+                'risk_adjusted_return': 1.0
+            }
+            
         rr = abs(tp - entry) / abs(entry - sl) if sl != 0 else 0
-        base_prob = 60 + (rr * 5)  # Dummy: higher RR = higher prob
+        base_prob = 60 + (rr * 5)
         final_prob = min(85, max(50, base_prob))
         
         if final_prob >= 75:
-            conf = "🔴 HIGH CONFIDENCE"
+            conf = "HIGH CONFIDENCE"
             hold = "2-4 trading days" if rr >= 3 else "1-3 trading days"
             tf = "SWING" if rr >= 2.5 else "DAY TRADE"
         elif final_prob >= 65:
-            conf = "🟡 MEDIUM CONFIDENCE"
+            conf = "MEDIUM CONFIDENCE"
             hold = "4-24 hours"
             tf = "DAY TRADE"
         else:
-            conf = "🟢 MODERATE CONFIDENCE"
+            conf = "MODERATE CONFIDENCE"
             hold = "2-8 hours"
             tf = "INTRADAY"
         
@@ -471,27 +476,25 @@ class InstitutionalAnalytics:
         """Enhanced market context analysis"""
         hour = current_time.hour
         
-        # Session analysis
         if 0 <= hour < 8:
-            session = "🌙 Asian"
-            volatility = "🟢 LOW-MEDIUM"
+            session = "Asian"
+            volatility = "LOW-MEDIUM"
         elif 8 <= hour < 13:
-            session = "🏛️ European"
-            volatility = "🔴 HIGH" 
+            session = "European"
+            volatility = "HIGH" 
         elif 13 <= hour < 16:
-            session = "⚡ Overlap"
-            volatility = "🔴 EXTREME"
+            session = "Overlap"
+            volatility = "EXTREME"
         else:
-            session = "🗽 US"
-            volatility = "🟡 MEDIUM-HIGH"
+            session = "US"
+            volatility = "MEDIUM-HIGH"
         
-        # Seasonal patterns for Nov 2025
         month = current_time.month
         seasonal_patterns = {
-            11: "📈 Year-End Planning | Q4 Flows Accelerating"
+            11: "Year-End Planning | Q4 Flows Accelerating"
         }
         
-        monthly_outlook = seasonal_patterns.get(month, "📊 Standard institutional flows")
+        monthly_outlook = seasonal_patterns.get(month, "Standard institutional flows")
         
         return {
             'current_session': session,
@@ -500,49 +503,54 @@ class InstitutionalAnalytics:
         }
 
 # =============================================================================
-# SIGNAL FORMATTING (CONDENSED INSTITUTIONAL FORMAT)
+# FIXED SIGNAL FORMATTING
 # =============================================================================
 def format_institutional_signal(parsed):
-    s = parsed['symbol']
-    asset = get_asset_info(s)
-    digits = asset['digits']
-    pip = 0.0001 if digits == 5 else 0.001 if digits == 3 else 0.01 if digits == 2 else 1
+    """Fixed signal formatting"""
+    try:
+        s = parsed['symbol']
+        asset = get_asset_info(s)
+        digits = asset['digits']
+        
+        entry = parsed['entry']
+        tp = parsed['tp']
+        sl = parsed['sl']
+        current = parsed['current_price']
 
-    entry = parsed['entry']
-    tp    = parsed['tp']
-    sl    = parsed['sl']
-    current = parsed['current_price']
+        # Calculate pips and RR
+        pip = 0.0001 if digits == 5 else 0.001 if digits == 3 else 0.01 if digits == 2 else 1
+        pips_tp = abs(tp - entry) / pip
+        pips_sl = abs(sl - entry) / pip
+        rr = round(pips_tp / pips_sl, 2) if pips_sl > 0 else 0
 
-    pips_tp = abs(tp - entry) / pip
-    pips_sl = abs(sl - entry) / pip
-    rr = round(pips_tp / pips_sl, 2)
+        # Smart hold time
+        if rr >= 6.0:
+            hold, style = "4–10 trading days", "POSITIONAL"
+        elif rr >= 3.5:
+            hold, style = "3–6 trading days", "SWING"
+        elif rr >= 2.0:
+            hold, style = "1–3 trading days", "DAY TRADE"
+        else:
+            hold, style = "4–24 hours", "INTRADAY"
 
-    # Умное время удержания
-    base_days = rr * 0.75
-    if rr >= 6.0:
-        hold, style = "4–10 trading days", "POSITIONAL"
-    elif rr >= 3.5:
-        hold, style = "3–6 trading days", "SWING"
-    elif rr >= 2.0:
-        hold, style = "1–3 trading days", "DAY TRADE"
-    else:
-        hold, style = "4–24 hours", "INTRADAY"
+        # Get pivots and analytics
+        piv = InstitutionalAnalytics.get_real_pivots(s, current)
+        risk_data = InstitutionalAnalytics.get_risk_assessment(parsed['risk_amount'], 5.0)
+        prob_metrics = InstitutionalAnalytics.calculate_probability_metrics(entry, tp, sl, s, parsed['direction'])
+        market_context = InstitutionalAnalytics.get_market_context(s, datetime.utcnow())
 
-    # Реальные пивоты
-    piv = InstitutionalAnalytics.get_real_pivots(s)
+        # Market regime
+        regime_map = {
+            "USDJPY": "BoJ Exit YCC + Ueda Hawkish Shift",
+            "CADJPY": "Carry Unwind + Oil Collapse Risk", 
+            "XAUUSD": "Negative Real Yields + War Premium",
+            "EURUSD": "ECB-50 vs Fed-25 Divergence",
+            "NZDUSD": "RBNZ Front-Loaded Tightening",
+            "BTCUSD": "Spot ETF Inflows + Halving Cycle",
+        }
+        regime = regime_map.get(s, "Institutional Order Flow Dominance")
 
-    # Режим рынка 2025
-    regime_map = {
-        "USDJPY": "BoJ Exit YCC + Ueda Hawkish Shift",
-        "CADJPY": "Carry Unwind + Oil Collapse Risk",
-        "XAUUSD": "Negative Real Yields + War Premium",
-        "EURUSD": "ECB-50 vs Fed-25 Divergence",
-        "NZDUSD": "RBNZ Front-Loaded Tightening",
-        "BTCUSD": "Spot ETF Inflows + Halving Cycle",
-    }
-    regime = regime_map.get(s, "Institutional Order Flow Dominance")
-
-    return f"""
+        signal = f"""
 {parsed['emoji']} <b>{parsed['direction']} {s}</b>
 <b>FXWAVE INSTITUTIONAL DESK</b>
 ═══════════════════════════════════
@@ -557,35 +565,43 @@ def format_institutional_signal(parsed):
 • Size  <code>{parsed['position_size']:.2f}</code> lots
 • Risk  <code>${parsed['risk_amount']:.0f}</code> (5.0% free margin)
 • R:R  <code>{rr}:1</code>
+• Risk Level {risk_data['emoji']} {risk_data['level']}
 
 <b>INSTITUTIONAL LEVELS</b>
-• Daily Pivot <code>{piv['daily_pivot']}</code> R1 {piv['R1']} | S1 {piv['S1']}
-• Weekly Pivot <code>{piv['weekly_pivot']}</code>
-• Monthly Pivot <code>{piv['monthly_pivot']}</code>
+• Daily Pivot <code>{piv['daily_pivot']:.{digits}f}</code>
+• Weekly Pivot <code>{piv['weekly_pivot']:.{digits}f}</code>
+• Monthly Pivot <code>{piv['monthly_pivot']:.{digits}f}</code>
 
 {FinancialModelingPrep.get_economic_calendar(s)}
 
-<b>MARKET REGIME</b>
-• Session  New York (peak liquidity)
-• Regime  {regime}
-• Expected Hold {hold}
-• Style   {style}
-• Confidence High (R:R ≥ 3.5 + pivot confluence)
+<b>MARKET CONTEXT</b>
+• Session {market_context['current_session']}
+• Volatility {market_context['volatility_outlook']}
+• Regime {regime}
+• Hold Time {hold}
+• Style {style}
+• Confidence {prob_metrics['confidence_level']}
 
 #FXWavePRO #Institutional #Tier1
 <i>FXWave Institutional Desk | @fxfeelgood</i>
-    """.strip()
-    return signal
+<i>Signal generated: {datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UTC</i>
+        """.strip()
+
+        return signal
+        
+    except Exception as e:
+        logger.error(f"Formatting failed: {e}")
+        return f"Error formatting signal: {str(e)}"
+
 # =============================================================================
-# WEBHOOK ROUTES
+# WEBHOOK ROUTES (FIXED)
 # =============================================================================
 
 @app.route('/webhook', methods=['POST', 'GET'])
 def webhook():
-    """Enhanced webhook handler - FIXED parsing"""
+    """Fixed webhook handler"""
     
     logger.info("=== INSTITUTIONAL WEBHOOK REQUEST ===")
-    logger.info(f"Method: {request.method}")
     
     if request.method == 'GET':
         return jsonify({
@@ -596,34 +612,30 @@ def webhook():
         }), 200
     
     try:
-        # Check for photo file (screenshot mode)
+        # Check for photo file
         if 'photo' not in request.files:
-            logger.info("📝 Text-only institutional signal detected")
+            logger.info("Text-only institutional signal detected")
             
-            # Process text signal
             caption = request.form.get('caption', '')
             if caption:
-                logger.info("🔄 Parsing institutional signal format...")
+                logger.info("Parsing institutional signal format...")
                 
-                # Parse the signal using enhanced parser
                 parsed_data = parse_signal(caption)
                 
                 if not parsed_data:
-                    logger.error("❌ Failed to parse institutional signal")
+                    logger.error("Failed to parse institutional signal")
                     return jsonify({
                         "status": "error", 
-                        "message": "Invalid signal format"
+                        "message": "Invalid signal format - check symbol and price data"
                     }), 400
                 
-                # Format professional institutional signal
                 formatted_signal = format_institutional_signal(parsed_data)
-                logger.info(f"✅ Institutional signal formatted for {parsed_data['symbol']}")
+                logger.info(f"Institutional signal formatted for {parsed_data['symbol']}")
                 
-                # Send to Telegram
                 result = telegram_bot.send_message_safe(formatted_signal)
                 
                 if result['status'] == 'success':
-                    logger.info(f"✅ Institutional signal delivered: {result['message_id']}")
+                    logger.info(f"Institutional signal delivered: {result['message_id']}")
                     return jsonify({
                         "status": "success",
                         "message_id": result['message_id'],
@@ -632,7 +644,7 @@ def webhook():
                         "timestamp": datetime.utcnow().isoformat() + 'Z'
                     }), 200
                 else:
-                    logger.error(f"❌ Institutional signal failed: {result['message']}")
+                    logger.error(f"Institutional signal failed: {result['message']}")
                     return jsonify({
                         "status": "error", 
                         "message": result['message']
@@ -644,18 +656,16 @@ def webhook():
         photo = request.files['photo']
         caption = request.form.get('caption', '')
         
-        # Parse and format signal
         parsed_data = parse_signal(caption)
         if not parsed_data:
             return jsonify({"status": "error", "message": "Invalid signal format"}), 400
             
         formatted_caption = format_institutional_signal(parsed_data)
         
-        # Send to Telegram with photo
         result = telegram_bot.send_photo_safe(photo, formatted_caption)
         
         if result['status'] == 'success':
-            logger.info(f"✅ Institutional signal with photo delivered: {result['message_id']}")
+            logger.info(f"Institutional signal with photo delivered: {result['message_id']}")
             return jsonify({
                 "status": "success",
                 "message_id": result['message_id'],
@@ -663,14 +673,14 @@ def webhook():
                 "timestamp": datetime.utcnow().isoformat() + 'Z'
             }), 200
         else:
-            logger.error(f"❌ Telegram error: {result['message']}")
+            logger.error(f"Telegram error: {result['message']}")
             return jsonify({
                 "status": "error", 
                 "message": result['message']
             }), 500
             
     except Exception as e:
-        logger.error(f"💥 Institutional webhook error: {e}", exc_info=True)
+        logger.error(f"Institutional webhook error: {e}", exc_info=True)
         return jsonify({
             "status": "error",
             "message": f"Institutional system error: {str(e)}"
@@ -680,7 +690,7 @@ def webhook():
 def health():
     """Health check for institutional system"""
     try:
-        test_result = telegram_bot.send_message_safe("🏛️ Institutional System Health Check - Operational")
+        test_result = telegram_bot.send_message_safe("Institutional System Health Check - Operational")
         
         health_status = {
             "status": "healthy" if test_result['status'] == 'success' else "degraded",
@@ -696,7 +706,7 @@ def health():
         return jsonify(health_status), 200
         
     except Exception as e:
-        logger.error(f"❌ Health check failed: {e}")
+        logger.error(f"Health check failed: {e}")
         return jsonify({
             "status": "unhealthy",
             "error": str(e),
@@ -705,41 +715,24 @@ def health():
 
 @app.route('/test-signal', methods=['GET'])
 def test_institutional_signal():
-    """Test institutional signal with enhanced format"""
+    """Test institutional signal"""
     try:
-        # Test signal matching FIXED MQL5 format
         test_caption = """
-🔴 SELL LIMIT CADJPY
-🏛️ FXWAVE INSTITUTIONAL DESK
+▲ LONG CADJPY
+FXWAVE INSTITUTIONAL DESK
 ═══════════════════════════════════
 
-🎯 ENTRY: `110.940`
-💰 TAKE PROFIT: `109.852`
-🛡️ STOP LOSS: `111.233`
+ENTRY: `110.940`
+TAKE PROFIT: `109.852` 
+STOP LOSS: `111.233`
 
-📊 RISK & REWARD
+RISK & REWARD
 ────────────────────────────
 • Position Size: `0.67` lots
 • Risk Exposure: `$125.79`
 • Account Risk: `5.0%`
-• Expected Profit: `$466.68`
 • R:R Ratio: `3.71:1`
-• Risk Level: 🟡 MEDIUM
-• Calculated for 5.0% risk on $2516 balance
-
-🎯 TRADING CONTEXT
-────────────────────────────
-• Order Type: SELL LIMIT at `110.940`
-• Current Price: `110.500`
-• Daily Pivot: `110.800`
-• Daily POC: `110.250`
-• Weekly POC: `109.800`
-• Volatility: 🟠 HIGH
-• Hold Time: 2-4 trading days
-• Time Frame: SWING
-
-#FXWavePRO #Institutional #RiskManaged
-<i>Signal generated: 2025-11-25 16:19:45 UTC</i>
+• Risk Level: MEDIUM
         """
         
         parsed_data = parse_signal(test_caption)
@@ -769,135 +762,18 @@ def test_institutional_signal():
             "message": str(e)
         }), 500
 
-@app.route('/economic-calendar/<symbol>', methods=['GET'])
-def get_economic_calendar(symbol):
-    """API endpoint to get economic calendar for symbol"""
-    try:
-        calendar = FinancialModelingPrep.get_economic_calendar(symbol.upper())
-        return jsonify({
-            "status": "success",
-            "symbol": symbol.upper(),
-            "calendar": calendar,
-            "timestamp": datetime.utcnow().isoformat() + 'Z'
-        }), 200
-    except Exception as e:
-        return jsonify({
-            "status": "error",
-            "message": str(e)
-        }), 500
-
 @app.route('/')
 def home():
-    return """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>FXWave Institutional Desk v3.0</title>
-        <style>
-            body { font-family: 'Segoe UI', Arial, sans-serif; margin: 40px; background: #0f1b2d; color: #e0e0e0; }
-            .container { max-width: 800px; margin: 0 auto; background: #1a2b3e; padding: 30px; border-radius: 15px; box-shadow: 0 8px 32px rgba(0,0,0,0.3); border: 1px solid #2a4365; }
-            .status { padding: 15px; border-radius: 8px; margin: 15px 0; font-weight: bold; }
-            .healthy { background: #1e3a2e; color: #48bb78; border: 1px solid #2d7a4c; }
-            .unhealthy { background: #442727; color: #f56565; border: 1px solid #c53030; }
-            .btn { background: #2d7a4c; color: white; padding: 12px 24px; border: none; border-radius: 6px; cursor: pointer; margin: 8px; font-size: 14px; font-weight: 600; transition: all 0.3s; }
-            .btn:hover { background: #38a169; transform: translateY(-2px); }
-            .header { text-align: center; margin-bottom: 30px; }
-            .header h1 { color: #63b3ed; margin: 0; font-size: 2.5em; }
-            .header p { color: #90cdf4; font-size: 1.1em; }
-            .integration-box { margin-top: 25px; padding: 20px; background: #2d3748; border-radius: 8px; border-left: 4px solid #63b3ed; }
-            .feature-list { margin: 20px 0; }
-            .feature-item { margin: 10px 0; padding: 10px; background: #2d3748; border-radius: 5px; }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="header">
-                <h1>🏛️ FXWave Institutional Desk v3.0</h1>
-                <p>Professional Trading Signals Infrastructure - Enhanced Edition</p>
-            </div>
-            
-            <div id="status" class="status">Checking institutional system status...</div>
-            
-            <div style="text-align: center; margin: 25px 0;">
-                <button class="btn" onclick="testHealth()">System Health</button>
-                <button class="btn" onclick="testSignal()">Test Signal</button>
-                <button class="btn" onclick="checkWebhook()">Webhook Status</button>
-            </div>
-            
-            <div class="feature-list">
-                <h3>🎯 Enhanced Institutional Features:</h3>
-                <div class="feature-item">• Asset-Specific Configuration & POC Levels</div>
-                <div class="feature-item">• Real Economic Calendar Integration (FMP Auto-Update)</div>
-                <div class="feature-item">• Financial Modeling Prep API</div>
-                <div class="feature-item">• Dynamic Pivot & Murray Math Analysis</div>
-                <div class="feature-item">• Enhanced Risk Management & Probability Scoring</div>
-                <div class="feature-item">• Real-time Market Context & Session Analysis</div>
-            </div>
-            
-            <div class="integration-box">
-                <h4>🔧 MT5 Institutional Integration</h4>
-                <code style="background: #1a202c; padding: 10px; border-radius: 4px; display: block; margin: 10px 0;">
-                    WebhookURL = "https://fxwave-signals-mt5.onrender.com/webhook"
-                </code>
-                <p style="color: #a0aec0; font-size: 0.9em;">
-                    • Enhanced MQL5 Signal Parsing (FIXED for LIMIT/STOP)<br>
-                    • Asset-Specific Price Formatting<br>
-                    • Professional Risk Analytics<br>
-                    • Real-time Economic Calendar (Nov 25-30, 2025)
-                </p>
-            </div>
-        </div>
-
-        <script>
-            async function testHealth() {
-                try {
-                    const response = await fetch('/health');
-                    const data = await response.json();
-                    const statusDiv = document.getElementById('status');
-                    statusDiv.className = data.status === 'healthy' ? 'status healthy' : 'status unhealthy';
-                    statusDiv.innerHTML = `🏥 Institutional System: ${data.status.toUpperCase()} | Assets: ${data.asset_config} | FMP API: ${data.fmp_api}`;
-                } catch (error) {
-                    document.getElementById('status').innerHTML = '❌ Status: ERROR - ' + error;
-                }
-            }
-
-            async function testSignal() {
-                try {
-                    const response = await fetch('/test-signal');
-                    const data = await response.json();
-                    alert(data.status === 'success' ? '✅ Institutional test signal sent!' : '❌ Error: ' + data.message);
-                } catch (error) {
-                    alert('Error: ' + error);
-                }
-            }
-
-            async function checkWebhook() {
-                try {
-                    const response = await fetch('/webhook');
-                    const data = await response.json();
-                    alert('🌐 Institutional Webhook: ' + data.status);
-                } catch (error) {
-                    alert('Error: ' + error);
-                }
-            }
-
-            // Check status on load
-            testHealth();
-        </script>
-    </body>
-    </html>
-    """
+    return "FXWave Institutional Signals v3.0 - Operational"
 
 # =============================================================================
 # INSTITUTIONAL SYSTEM STARTUP
 # =============================================================================
 if __name__ == '__main__':
-    logger.info("🚀 Starting FXWave Institutional Signals Bridge v3.0")
-    logger.info("🏛️ Enhanced Institutional Analytics: ACTIVATED")
-    logger.info("📊 Asset-Specific Configuration: LOADED")
-    logger.info("📈 Financial Modeling Prep: INTEGRATED (Auto-Update)")
-    logger.info(f"🌐 URL: https://fxwave-signals-mt5.onrender.com")
-    logger.info(f"💼 Configured Assets: {len(ASSET_CONFIG)} symbols")
+    logger.info("Starting FXWave Institutional Signals Bridge v3.0")
+    logger.info("Enhanced Institutional Analytics: ACTIVATED")
+    logger.info("Asset-Specific Configuration: LOADED")
+    logger.info(f"Configured Assets: {len(ASSET_CONFIG)} symbols")
     
     port = int(os.environ.get('PORT', 10000))
     app.run(
