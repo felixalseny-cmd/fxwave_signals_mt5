@@ -303,55 +303,37 @@ class FinancialModelingPrep:
 # ENHANCED SIGNAL PARSING (FIXED FOR MQL5 FORMAT)
 # =============================================================================
 def parse_signal(caption):
-    """Парсит любой caption из MQL5: с эмодзи, без, BUY LONG, BUY LIMIT и т.д."""
+    """Супернадёжный парсер — без эмодзи, с fallback-лотами"""
     try:
-        logger.info(f"Parsing caption (first 250 chars): {caption[:250]}")
-
-        # Убираем возможные переносы и лишние пробелы
         text = " ".join(caption.split())
+        logger.info(f"Parsing: {text[:300]}")
 
-        # Вариант 1: green_circle/red_circle BUY/SELL LIMIT/STOP SYMBOL (самый частый)
-        match = re.search(r'(green_circle|red_circle)\s+(BUY|SELL)\s+(LIMIT|STOP)?\s*([A-Z]{6,8})', text)
+        # Ищем символ и направление (без эмодзи!)
+        match = re.search(r'\b(BUY|SELL)\s+(LONG|SHORT|LIMIT|STOP)?\s*([A-Z]{6,8})', text, re.IGNORECASE)
         if not match:
-            # Вариант 2: просто BUY LONG / SELL SHORT SYMBOL (новый формат)
-            match = re.search(r'\b(BUY|SELL)\s+(LONG|SHORT)\s+([A-Z]{6,8})', text)
-        if not match:
-            # Вариант 3: BUY LIMIT / SELL STOP SYMBOL без эмодзи
-            match = re.search(r'\b(BUY|SELL)\s+(LIMIT|STOP)\s+([A-Z]{6,8})', text)
-        if not match:
-            # Вариант 4: просто символ в начале строки (на случай если всё сломалось)
-            match = re.search(r'^([A-Z]{6,8})', text, re.MULTILINE)
-
-        if not match:
-            logger.error("No symbol/direction found in caption")
+            logger.error("Symbol not found")
             return None
 
-        # Определяем направление
-        if match.group(1) in ['green_circle', 'BUY']:
-            emoji = 'green_circle'
-            direction = "LONG"
-        else:
-            emoji = 'red_circle'
-            direction = "SHORT"
+        action, _, symbol = match.groups()
+        symbol = symbol.upper()
+        direction = "LONG" if action == "BUY" else "SHORT"
+        emoji = "Up" if direction == "LONG" else "Down"  # Только стрелки!
 
-        symbol = match.group(3) if len(match.groups()) >= 3 else match.group(1)
-        symbol = symbol.upper().strip()
-
-        # Цены — ищем по шаблону `число`
+        # Цены
         entry = float(re.search(r'ENTRY[:\s]+`?([\d.]+)', text).group(1))
-        tp    = float(re.search(r'TAKE PROFIT[:\s]+`?([\d.]+)', text).group(1))
-        sl    = float(re.search(r'STOP LOSS[:\s]+`?([\d.]+)', text).group(1))
+        tp    = float(re.search(r'TP[:\s]+`?([\d.]+)', text).group(1))
+        sl    = float(re.search(r'SL[:\s]+`?([\d.]+)', text).group(1))
 
-        # Лоты и риск
-        lots_match = re.search(r'Position Size[:\s]+`?([\d.]+)', text)
-        risk_match = re.search(r'Risk Exposure[:\s]+\$([\d.]+)', text)
-        rr_match   = re.search(r'R:R Ratio[:\s]+`?([\d.]+)', text)
+        # Лоты: если не нашёл — 3.0 (для $20k баланса)
+        lots_match = re.search(r'Size[:\s]+`?([\d.]+)', text)
+        position_size = float(lots_match.group(1)) if lots_match else 3.0
 
-        position_size = float(lots_match.group(1)) if lots_match else 0.0
-        risk_amount   = float(risk_match.group(1)) if risk_match else 0.0
-        rr_ratio      = float(rr_match.group(1)) if rr_match else 0.0
+        # Риск и RR
+        risk_match = re.search(r'Risk[:\s]+\$([\d.]+)', text)
+        risk_amount = float(risk_match.group(1)) if risk_match else "600"))  # ~3 лота × 200 пипов
 
-        logger.info(f"SUCCESSFULLY PARSED → {emoji} {direction} {symbol} | Entry {entry}")
+        rr_match = re.search(r'R:R[:\s]+([\d.]+)', text)
+        rr_ratio = float(rr_match.group(1)) if rr_match else 3.0
 
         return {
             'symbol': symbol,
@@ -363,13 +345,12 @@ def parse_signal(caption):
             'position_size': position_size,
             'risk_amount': risk_amount,
             'rr_ratio': rr_ratio,
-            'current_price': entry  # fallback, если не найдёт BID
+            'current_price': entry
+                float(re.search(r'Current[:\s]+`?([\d.]+)', text).group(1)) if re.search(r'Current', text) else entry
         }
-
     except Exception as e:
-        logger.error(f"Parse failed: {e}")
+        logger.error(f"Parse error: {e}")
         return None
-
 # =============================================================================
 # ENHANCED INSTITUTIONAL ANALYTICS (CONDENSED FORMAT)
 # =============================================================================
