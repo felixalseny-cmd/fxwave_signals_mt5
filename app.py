@@ -506,91 +506,75 @@ def format_institutional_signal(parsed):
     s = parsed['symbol']
     asset = get_asset_info(s)
     digits = asset['digits']
+    pip = 0.0001 if digits == 5 else 0.001 if digits == 3 else 0.01 if digits == 2 else 1
 
     entry = parsed['entry']
     tp    = parsed['tp']
     sl    = parsed['sl']
     current = parsed['current_price']
 
-    # === УМНЫЙ РАСЧЁТ PIPS И R:R ===
-    pip_size = 0.0001 if digits == 5 else 0.001 if digits == 3 else 0.01 if digits == 2 else 1
-    pips_to_tp = abs(tp - entry) / pip_size
-    pips_to_sl = abs(sl - entry) / pip_size
-    rr = round(pips_to_tp / pips_to_sl, 2) if pips_to_sl > 0 else 0
+    pips_tp = abs(tp - entry) / pip
+    pips_sl = abs(sl - entry) / pip
+    rr = round(pips_tp / pips_sl, 2)
 
-    # === УМНОЕ ПРОГНОЗИРОВАНИЕ HOLD TIME (на основе волатильности + R:R) ===
-    # Чем выше R:R — тем дольше можно держать (больше времени на отработку)
-    # Добавляем текущую волатильность (ATR H1) — если она высокая, сокращаем время
-    atr_pips = 80  # dummy, в реале можно тянуть из MT5 или Binance
-    if s in ['XAUUSD', 'BTCUSD']:
-        atr_pips *= 2
-
-    base_days = rr * 0.7  # 1:1 → ~0.7 дня, 5:1 → ~3.5 дня
-    volatility_factor = max(0.6, min(1.8, 100 / atr_pips))  # высокая вола → быстрее выходим
-    expected_days = round(base_days * volatility_factor, 1)
-
-    if expected_days >= 5:
-        hold = f"{int(expected_days)}–{int(expected_days*1.4)} trading days"
-        style = "POSITIONAL"
-    elif expected_days >= 2.5:
-        hold = f"{int(expected_days)}–{int(expected_days+2)} trading days"
-        style = "SWING"
-    elif expected_days >= 1:
-        hold = "1–2 trading days"
-        style = "DAY TRADE"
+    # Умное время удержания
+    base_days = rr * 0.75
+    if rr >= 6.0:
+        hold, style = "4–10 trading days", "POSITIONAL"
+    elif rr >= 3.5:
+        hold, style = "3–6 trading days", "SWING"
+    elif rr >= 2.0:
+        hold, style = "1–3 trading days", "DAY TRADE"
     else:
-        hold = "4–24 hours"
-        style = "INTRADAY"
+        hold, style = "4–24 hours", "INTRADAY"
 
-    # === АКТУАЛЬНЫЙ РЕЖИМ РЫНКА (2025) ===
-    regime = {
-        'EURUSD': 'ECB vs Fed Divergence',
-        'GBPUSD': 'UK Recession Risk',
-        'USDJPY': 'BoJ Exit Yield Curve Control',
-        'AUDUSD': 'China Recovery Play',
-        'USDCAD': 'Oil + BoC Hawkish',
-        'CADJPY': 'Carry Trade Unwind Risk',
-        'XAUUSD': 'Real Rates + Geopolitics',
-        'BTCUSD': 'Macro Correlation Break',
-        'NZDUSD': 'RBNZ Aggressive Hikes',
-    }.get(s, 'Institutional Flow Dominance')
+    # Реальные пивоты
+    piv = InstitutionalAnalytics.get_real_pivots(s)
 
-    # === КРАСИВЫЙ СИГНАЛ ===
-    signal = f"""
+    # Режим рынка 2025
+    regime_map = {
+        "USDJPY": "BoJ Exit YCC + Ueda Hawkish Shift",
+        "CADJPY": "Carry Unwind + Oil Collapse Risk",
+        "XAUUSD": "Negative Real Yields + War Premium",
+        "EURUSD": "ECB-50 vs Fed-25 Divergence",
+        "NZDUSD": "RBNZ Front-Loaded Tightening",
+        "BTCUSD": "Spot ETF Inflows + Halving Cycle",
+    }
+    regime = regime_map.get(s, "Institutional Order Flow Dominance")
+
+    return f"""
 {parsed['emoji']} <b>{parsed['direction']} {s}</b>
 <b>FXWAVE INSTITUTIONAL DESK</b>
 ═══════════════════════════════════
 
 <b>EXECUTION</b>
-• Entry  <code>{entry:.{digits}f}</code>
-• TP   <code>{tp:.{digits}f}</code> (+{pips_to_tp:.0f} pips)
-• SL   <code>{sl:.{digits}f}</code> ({pips_to_sl:.0f} pips)
+• Entry <code>{entry:.{digits}f}</code>
+• TP  <code>{tp:.{digits}f}</code> (+{pips_tp:.0f} pips)
+• SL  <code>{sl:.{digits}f}</code> ({pips_sl:.0f} pips)
 • Current <code>{current:.{digits}f}</code>
 
-<b>RISK</b>
+<b>RISK PROFILE</b>
 • Size  <code>{parsed['position_size']:.2f}</code> lots
-• Risk  <code>${parsed['risk_amount']:.0f}</code> (5.0%)
+• Risk  <code>${parsed['risk_amount']:.0f}</code> (5.0% free margin)
 • R:R  <code>{rr}:1</code>
 
-<b>LEVELS</b>
-• Daily POC <code>{asset['poc_d']:.{digits}f}</code>
-• Weekly POC <code>{asset['poc_w']:.{digits}f}</code>
-• Pivot  <code>{round(current, digits)}</code> (current price)
+<b>INSTITUTIONAL LEVELS</b>
+• Daily Pivot <code>{piv['daily_pivot']}</code> R1 {piv['R1']} | S1 {piv['S1']}
+• Weekly Pivot <code>{piv['weekly_pivot']}</code>
+• Monthly Pivot <code>{piv['monthly_pivot']}</code>
 
-{economic_calendar := FinancialModelingPrep.get_economic_calendar(s)}
+{FinancialModelingPrep.get_economic_calendar(s)}
 
-<b>CONTEXT</b>
-• Session  US (peak liquidity)
+<b>MARKET REGIME</b>
+• Session  New York (peak liquidity)
 • Regime  {regime}
-• Volatility High (ATR > 80 pips)
 • Expected Hold {hold}
 • Style   {style}
-• Confidence High (R:R > 3 + confluence)
+• Confidence High (R:R ≥ 3.5 + pivot confluence)
 
-#FXWavePRO #Institutional
+#FXWavePRO #Institutional #Tier1
 <i>FXWave Institutional Desk | @fxfeelgood</i>
     """.strip()
-
     return signal
 # =============================================================================
 # WEBHOOK ROUTES
