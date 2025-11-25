@@ -303,53 +303,61 @@ class FinancialModelingPrep:
 # ENHANCED SIGNAL PARSING (FIXED FOR MQL5 FORMAT)
 # =============================================================================
 def parse_signal(caption):
-    """Супернадёжный парсер — без эмодзи, с fallback-лотами"""
+    """Парсер без эмодзи, с fallback-лотами и правильным синтаксисом"""
     try:
         text = " ".join(caption.split())
-        logger.info(f"Parsing: {text[:300]}")
+        logger.info(f"Parsing caption: {text[:300]}")
 
-        # Ищем символ и направление (без эмодзи!)
+        # Ищем направление и символ (без эмодзи!)
         match = re.search(r'\b(BUY|SELL)\s+(LONG|SHORT|LIMIT|STOP)?\s*([A-Z]{6,8})', text, re.IGNORECASE)
         if not match:
-            logger.error("Symbol not found")
+            logger.error("No symbol/direction found")
             return None
 
-        action, _, symbol = match.groups()
-        symbol = symbol.upper()
+        action = match.group(1).upper()
+        symbol = match.group(3).upper()
         direction = "LONG" if action == "BUY" else "SHORT"
-        emoji = "Up" if direction == "LONG" else "Down"  # Только стрелки!
+        arrow = "Up" if direction == "LONG" else "Down"
 
         # Цены
         entry = float(re.search(r'ENTRY[:\s]+`?([\d.]+)', text).group(1))
         tp    = float(re.search(r'TP[:\s]+`?([\d.]+)', text).group(1))
         sl    = float(re.search(r'SL[:\s]+`?([\d.]+)', text).group(1))
 
-        # Лоты: если не нашёл — 3.0 (для $20k баланса)
+        # Лоты — если не нашёл, ставим 3.0 (для $20k аккаунта)
         lots_match = re.search(r'Size[:\s]+`?([\d.]+)', text)
         position_size = float(lots_match.group(1)) if lots_match else 3.0
 
-        # Риск и RR
-        risk_match = re.search(r'Risk[:\s]+\$([\d.]+)', text)
-        risk_amount = float(risk_match.group(1)) if risk_match else "600"))  # ~3 лота × 200 пипов
+        # Риск — если не нашёл, считаем примерно: 3 лота × 100 пипов = ~$300, но ставим $600 для безопасности
+        risk_match = re.search(r'Risk[:\s]+\$([\d.]+', text)
+        risk_amount = float(risk_match.group(1)) if risk_match else 600.0
 
+        # R:R
         rr_match = re.search(r'R:R[:\s]+([\d.]+)', text)
         rr_ratio = float(rr_match.group(1)) if rr_match else 3.0
+
+        current_price = entry  # fallback
+        curr_match = re.search(r'Current[:\s]+`?([\d.]+)', text)
+        if curr_match:
+            current_price = float(curr_match.group(1))
+
+        logger.info(f"PARSED → {arrow} {direction} {symbol} | {entry} | {position_size} lots")
 
         return {
             'symbol': symbol,
             'direction': direction,
-            'emoji': emoji,
+            'emoji': arrow,
             'entry': entry,
             'tp': tp,
             'sl': sl,
             'position_size': position_size,
             'risk_amount': risk_amount,
             'rr_ratio': rr_ratio,
-            'current_price': entry
-                float(re.search(r'Current[:\s]+`?([\d.]+)', text).group(1)) if re.search(r'Current', text) else entry
+            'current_price': current_price
         }
+
     except Exception as e:
-        logger.error(f"Parse error: {e}")
+        logger.error(f"Parse failed: {e}")
         return None
 # =============================================================================
 # ENHANCED INSTITUTIONAL ANALYTICS (CONDENSED FORMAT)
