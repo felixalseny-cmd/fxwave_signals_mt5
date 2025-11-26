@@ -135,6 +135,29 @@ ASSET_CONFIG = {
     "BTCUSD": {"digits": 1, "pip": 1, "tick_value_adj": 1, "poc_d": 92350, "poc_w": 89500},
     "USDCHF": {"digits": 5, "pip": 0.0001, "tick_value_adj": 1.0, "poc_d": 0.9050, "poc_w": 0.9020},
     "NZDUSD": {"digits": 5, "pip": 0.0001, "tick_value_adj": 1.0, "poc_d": 0.6120, "poc_w": 0.6090},
+    # ADDED SYMBOLS
+    "GBPAUD": {"digits": 5, "pip": 0.0001, "tick_value_adj": 1.0, "poc_d": 1.92000, "poc_w": 1.91000},
+    "EURGBP": {"digits": 5, "pip": 0.0001, "tick_value_adj": 1.0, "poc_d": 0.85200, "poc_w": 0.85000},
+    "AUDJPY": {"digits": 3, "pip": 0.01, "tick_value_adj": 1000, "poc_d": 100.500, "poc_w": 100.000},
+    "EURJPY": {"digits": 3, "pip": 0.01, "tick_value_adj": 1000, "poc_d": 164.000, "poc_w": 163.500},
+    "GBPJPY": {"digits": 3, "pip": 0.01, "tick_value_adj": 1000, "poc_d": 192.500, "poc_w": 191.800},
+    "AUDCAD": {"digits": 5, "pip": 0.0001, "tick_value_adj": 1.0, "poc_d": 0.89800, "poc_w": 0.89500},
+    "EURCAD": {"digits": 5, "pip": 0.0001, "tick_value_adj": 1.0, "poc_d": 1.46700, "poc_w": 1.46300},
+    "GBPCAD": {"digits": 5, "pip": 0.0001, "tick_value_adj": 1.0, "poc_d": 1.72000, "poc_w": 1.71500},
+    "EURAUD": {"digits": 5, "pip": 0.0001, "tick_value_adj": 1.0, "poc_d": 1.63000, "poc_w": 1.62500},
+    "GBPCHF": {"digits": 5, "pip": 0.0001, "tick_value_adj": 1.0, "poc_d": 1.15200, "poc_w": 1.14800},
+    "AUDCHF": {"digits": 5, "pip": 0.0001, "tick_value_adj": 1.0, "poc_d": 0.59800, "poc_w": 0.59500},
+    "AUDNZD": {"digits": 5, "pip": 0.0001, "tick_value_adj": 1.0, "poc_d": 1.08500, "poc_w": 1.08200},
+    "NZDCAD": {"digits": 5, "pip": 0.0001, "tick_value_adj": 1.0, "poc_d": 0.82800, "poc_w": 0.82500},
+    "USDCNH": {"digits": 5, "pip": 0.0001, "tick_value_adj": 1.0, "poc_d": 7.25000, "poc_w": 7.23000},
+    "USDSGD": {"digits": 5, "pip": 0.0001, "tick_value_adj": 1.0, "poc_d": 1.35200, "poc_w": 1.34800},
+    "USDHKD": {"digits": 5, "pip": 0.0001, "tick_value_adj": 1.0, "poc_d": 7.82000, "poc_w": 7.81000},
+    "XAGUSD": {"digits": 3, "pip": 0.01, "tick_value_adj": 100, "poc_d": 32.500, "poc_w": 32.000},
+    "XPTUSD": {"digits": 2, "pip": 0.01, "tick_value_adj": 100, "poc_d": 1050.00, "poc_w": 1030.00},
+    "XPDUSD": {"digits": 2, "pip": 0.01, "tick_value_adj": 100, "poc_d": 2100.00, "poc_w": 2050.00},
+    "USOIL": {"digits": 2, "pip": 0.01, "tick_value_adj": 100, "poc_d": 85.00, "poc_w": 83.50},
+    "UKOIL": {"digits": 2, "pip": 0.01, "tick_value_adj": 100, "poc_d": 89.00, "poc_w": 87.50},
+    "NGAS": {"digits": 3, "pip": 0.001, "tick_value_adj": 1000, "poc_d": 3.500, "poc_w": 3.400},
 }
 
 def get_asset_info(symbol):
@@ -155,6 +178,29 @@ PIVOTS = {
     "USDCAD": {"D": 1.3520, "W": 1.3480, "M": 1.3400},
     "BTCUSD": {"D": 92500, "W": 89500, "M": 85000},
     "USDCHF": {"D": 0.9050, "W": 0.9020, "M": 0.8950},
+    # ADDED PIVOTS FOR NEW SYMBOLS
+    "GBPAUD": {"D": 1.92000, "W": 1.91000, "M": 1.90000},
+    "EURGBP": {"D": 0.85200, "W": 0.85000, "M": 0.84800},
+    "AUDJPY": {"D": 100.500, "W": 100.000, "M": 99.500},
+    "EURJPY": {"D": 164.000, "W": 163.500, "M": 163.000},
+    "GBPJPY": {"D": 192.500, "W": 191.800, "M": 190.500},
+    "AUDCAD": {"D": 0.89800, "W": 0.89500, "M": 0.89200},
+    "EURCAD": {"D": 1.46700, "W": 1.46300, "M": 1.46000},
+    "GBPCAD": {"D": 1.72000, "W": 1.71500, "M": 1.71000},
+    "EURAUD": {"D": 1.63000, "W": 1.62500, "M": 1.62000},
+    "GBPCHF": {"D": 1.15200, "W": 1.14800, "M": 1.14500},
+    "AUDCHF": {"D": 0.59800, "W": 0.59500, "M": 0.59200},
+    "AUDNZD": {"D": 1.08500, "W": 1.08200, "M": 1.08000},
+    "NZDCAD": {"D": 0.82800, "W": 0.82500, "M": 0.82200},
+    "USDCNH": {"D": 7.25000, "W": 7.23000, "M": 7.20000},
+    "USDSGD": {"D": 1.35200, "W": 1.34800, "M": 1.34500},
+    "USDHKD": {"D": 7.82000, "W": 7.81000, "M": 7.80000},
+    "XAGUSD": {"D": 32.500, "W": 32.000, "M": 31.500},
+    "XPTUSD": {"D": 1050.00, "W": 1030.00, "M": 1000.00},
+    "XPDUSD": {"D": 2100.00, "W": 2050.00, "M": 2000.00},
+    "USOIL": {"D": 85.00, "W": 83.50, "M": 82.00},
+    "UKOIL": {"D": 89.00, "W": 87.50, "M": 86.00},
+    "NGAS": {"D": 3.500, "W": 3.400, "M": 3.300},
 }
 
 def calculate_pivot_levels(symbol, price):
@@ -168,8 +214,14 @@ def calculate_pivot_levels(symbol, price):
         range_est = 150
     elif "XAU" in symbol:
         range_est = 25
+    elif "XAG" in symbol:
+        range_est = 1.5
     elif "BTC" in symbol:
         range_est = 2500
+    elif "OIL" in symbol or "NGAS" in symbol:
+        range_est = 3.0
+    elif "XPT" in symbol or "XPD" in symbol:
+        range_est = 50
     else:
         range_est = 0.0150
     
@@ -236,7 +288,30 @@ class FinancialModelingPrep:
             'USDCAD': ['USD', 'CAD', 'CANADA'],
             'CADJPY': ['CAD', 'JPY', 'CANADA', 'JAPAN'],
             'USDCHF': ['USD', 'CHF', 'SWITZERLAND'],
-            'NZDUSD': ['NZD', 'USD', 'NEW ZEALAND']
+            'NZDUSD': ['NZD', 'USD', 'NEW ZEALAND'],
+            # ADDED CURRENCY PAIRS
+            'GBPAUD': ['GBP', 'AUD', 'UK', 'AUSTRALIA'],
+            'EURGBP': ['EUR', 'GBP', 'EUROZONE', 'UK'],
+            'AUDJPY': ['AUD', 'JPY', 'AUSTRALIA', 'JAPAN'],
+            'EURJPY': ['EUR', 'JPY', 'EUROZONE', 'JAPAN'],
+            'GBPJPY': ['GBP', 'JPY', 'UK', 'JAPAN'],
+            'AUDCAD': ['AUD', 'CAD', 'AUSTRALIA', 'CANADA'],
+            'EURCAD': ['EUR', 'CAD', 'EUROZONE', 'CANADA'],
+            'GBPCAD': ['GBP', 'CAD', 'UK', 'CANADA'],
+            'EURAUD': ['EUR', 'AUD', 'EUROZONE', 'AUSTRALIA'],
+            'GBPCHF': ['GBP', 'CHF', 'UK', 'SWITZERLAND'],
+            'AUDCHF': ['AUD', 'CHF', 'AUSTRALIA', 'SWITZERLAND'],
+            'AUDNZD': ['AUD', 'NZD', 'AUSTRALIA', 'NEW ZEALAND'],
+            'NZDCAD': ['NZD', 'CAD', 'NEW ZEALAND', 'CANADA'],
+            'USDCNH': ['USD', 'CNH', 'CHINA'],
+            'USDSGD': ['USD', 'SGD', 'SINGAPORE'],
+            'USDHKD': ['USD', 'HKD', 'HONG KONG'],
+            'XAGUSD': ['XAG', 'SILVER', 'USD'],
+            'XPTUSD': ['XPT', 'PLATINUM', 'USD'],
+            'XPDUSD': ['XPD', 'PALLADIUM', 'USD'],
+            'USOIL': ['OIL', 'CRUDE', 'ENERGY'],
+            'UKOIL': ['OIL', 'BRENT', 'ENERGY'],
+            'NGAS': ['GAS', 'NATURAL', 'ENERGY'],
         }
         
         relevant_currencies = currency_pairs.get(symbol, [])
@@ -328,7 +403,50 @@ class FinancialModelingPrep:
                 "🏦 RBNZ Official Cash Rate Decision",  
                 "💼 NZ Quarterly GDP Release",
                 "🌍 Global Dairy Trade Price Index"
-            ]
+            ],
+            # ADDED FALLBACK CALENDARS FOR NEW SYMBOLS
+            "GBPAUD": [
+                "🏛️ RBA Monetary Policy Meeting",
+                "📊 AU Employment Data",
+                "🏛️ BOE Governor Speech",
+                "📊 UK GDP Release"
+            ],
+            "EURGBP": [
+                "🏛️ ECB Press Conference",
+                "📊 EU Inflation Data",
+                "🏛️ BOE Rate Decision",
+                "📊 UK Retail Sales"
+            ],
+            "AUDJPY": [
+                "🏛️ RBA Policy Decision",
+                "📊 AU Consumer Confidence",
+                "🏛️ BOJ Policy Meeting",
+                "📊 Japan Industrial Production"
+            ],
+            "EURJPY": [
+                "🏛️ ECB President Speech",
+                "📊 EU PMI Data",
+                "🏛️ BOJ Summary of Opinions",
+                "📊 Japan Trade Balance"
+            ],
+            "GBPJPY": [
+                "🏛️ BOE Monetary Policy Report",
+                "📊 UK Inflation Data",
+                "🏛️ BOJ Policy Decision",
+                "📊 Japan Unemployment Rate"
+            ],
+            "XAGUSD": [
+                "🏛️ Fed Monetary Policy",
+                "📊 Industrial Production Data",
+                "💼 Silver ETF Flows",
+                "🌍 Geopolitical Developments"
+            ],
+            "USOIL": [
+                "🏛️ OPEC+ Meeting",
+                "📊 EIA Crude Oil Inventories",
+                "💼 US Rig Count Data",
+                "🌍 Geopolitical Tensions"
+            ],
         }
         
         events = fallback_events.get(symbol, [
@@ -609,6 +727,28 @@ def format_institutional_signal(parsed):
             "EURUSD": "ECB-50 vs Fed-25 Divergence",
             "NZDUSD": "RBNZ Front-Loaded Tightening",
             "BTCUSD": "Spot ETF Inflows + Halving Cycle",
+            "GBPAUD": "GBP Strength vs AUD Weakness Divergence",
+            "EURGBP": "ECB-BOE Policy Divergence Play",
+            "AUDJPY": "Risk Sentiment + Commodity Flows",
+            "EURJPY": "Eurozone-Japan Yield Differential",
+            "GBPJPY": "Carry Trade Dynamics + BOJ Policy",
+            "AUDCAD": "Commodity Correlation Shifts",
+            "EURCAD": "Eurozone-Canada Economic Divergence",
+            "GBPCAD": "UK-Canada Trade Flow Dynamics",
+            "EURAUD": "Euro-Aussie Risk Appetite Play",
+            "GBPCHF": "Safe Haven vs Risk Currency Battle",
+            "AUDCHF": "Commodity-Swiss Franc Correlation",
+            "AUDNZD": "Trans-Tasman Economic Divergence",
+            "NZDCAD": "Dairy-Crude Oil Correlation Play",
+            "USDCNH": "US-China Trade Relations Impact",
+            "USDSGD": "Asian Dollar Strength Dynamics",
+            "USDHKD": "HKMA Peg Defense Dynamics",
+            "XAGUSD": "Industrial Demand + Monetary Policy",
+            "XPTUSD": "Auto Industry Demand Outlook",
+            "XPDUSD": "Industrial & Automotive Applications",
+            "USOIL": "OPEC+ Supply Management",
+            "UKOIL": "Brent-WTI Spread Dynamics",
+            "NGAS": "Weather Patterns + Storage Levels",
         }
         regime = regime_map.get(s, "Institutional Order Flow Dominance")
 
@@ -618,9 +758,9 @@ def format_institutional_signal(parsed):
 ═══════════════════════════════════
 
 🎯 EXECUTION
-▪️ Entry {entry:.{digits}f}
-{tp_section}▪️ SL  {sl:.{digits}f} (-{pips_sl} pips)
-▪️ Current {current:.{digits}f}
+▪️ Entry <code>{entry:.{digits}f}</code>
+{tp_section}▪️ SL  <code>{sl:.{digits}f}</code> (-{pips_sl} pips)
+▪️ Current <code>{current:.{digits}f}</code>
 
 ⚡ RISK MANAGEMENT
 ────────────────────────────
@@ -631,11 +771,11 @@ def format_institutional_signal(parsed):
 
 📈 PRICE LEVELS
 ────────────────────────────
-▪️ Daily Pivot {piv['daily_pivot']:.{digits}f}
-▪️ R1 {piv['R1']:.{digits}f} | S1 {piv['S1']:.{digits}f}
-▪️ R2 {piv['R2']:.{digits}f} | S2 {piv['S2']:.{digits}f}  
-▪️ Weekly Pivot {piv['weekly_pivot']:.{digits}f}
-▪️ Monthly Pivot {piv['monthly_pivot']:.{digits}f}
+▪️ Daily Pivot <code>{piv['daily_pivot']:.{digits}f}</code>
+▪️ R1 <code>{piv['R1']:.{digits}f}</code> | S1 <code>{piv['S1']:.{digits}f}</code>
+▪️ R2 <code>{piv['R2']:.{digits}f}</code> | S2 <code>{piv['S2']:.{digits}f}</code>  
+▪️ Weekly Pivot <code>{piv['weekly_pivot']:.{digits}f}</code>
+▪️ Monthly Pivot <code>{piv['monthly_pivot']:.{digits}f}</code>
 
 {FinancialModelingPrep.get_economic_calendar(s)}
 
