@@ -433,15 +433,15 @@ class FinancialModelingPrep:
         """.strip()
 
 # =============================================================================
-# ENHANCED SIGNAL PARSING WITH REAL VOLUMES
+# ENHANCED SIGNAL PARSING WITH REAL VOLUMES AND ORDER TYPE
 # =============================================================================
 def parse_signal(caption):
-    """Enhanced parser for MQL5 format with REAL trading data"""
+    """Enhanced parser for MQL5 format with REAL trading data and order type"""
     try:
         logger.info(f"Parsing caption: {caption[:500]}...")
         
         # Clean text
-        text = re.sub(r'[^\w\s\.\:\$]', ' ', caption)
+        text = re.sub(r'[^\w\s\.\:\$\(\)]', ' ', caption)
         text = re.sub(r'\s+', ' ', text).strip().upper()
 
         # Extract symbol using multiple patterns
@@ -461,37 +461,40 @@ def parse_signal(caption):
         emoji = "▲" if direction == "LONG" else "▼" if direction == "SHORT" else "●"
         dir_text = "Up" if direction == "LONG" else "Down" if direction == "SHORT" else "Neutral"
 
-        # Extract entry price
+        # Extract entry price with order type
         def extract_price(pattern):
             m = re.search(pattern, text)
             return float(m.group(1)) if m else 0.0
 
         entry = extract_price(r'ENTRY[:\s]+([0-9.]+)')
         
-        # Extract multiple TP levels
-        tp_patterns = [
-            r'TP[:\s]+([0-9.]+)',
-            r'TAKE PROFIT[:\s]+([0-9.]+)',
-            r'TP1[:\s]+([0-9.]+)',
-            r'TP2[:\s]+([0-9.]+)',
-            r'TP3[:\s]+([0-9.]+)'
-        ]
+        # Extract order type from entry line
+        order_type = "LIMIT"
+        if "(LIMIT)" in caption.upper():
+            order_type = "LIMIT"
+        elif "(STOP)" in caption.upper():
+            order_type = "STOP"
         
+        # Extract TP levels - flexible parsing for 1, 2, or 3 TPs
         tp_levels = []
-        for pattern in tp_patterns:
-            matches = re.findall(pattern, text)
-            for match in matches:
-                tp_value = float(match)
-                if tp_value > 0 and tp_value not in tp_levels:
-                    tp_levels.append(tp_value)
         
-        # If no specific TP levels found, try to find any number after TP
+        # Try to find TP1, TP2, TP3 first
+        tp1_match = re.search(r'TP1[:\s]*([0-9.]+)', text)
+        tp2_match = re.search(r'TP2[:\s]*([0-9.]+)', text) 
+        tp3_match = re.search(r'TP3[:\s]*([0-9.]+)', text)
+        
+        if tp1_match:
+            tp_levels.append(float(tp1_match.group(1)))
+        if tp2_match:
+            tp_levels.append(float(tp2_match.group(1)))
+        if tp3_match:
+            tp_levels.append(float(tp3_match.group(1)))
+        
+        # If no numbered TPs found, look for generic TP
         if not tp_levels:
-            generic_tp_matches = re.findall(r'TP[:\s]*([0-9.]+)', text)
-            for match in generic_tp_matches:
-                tp_value = float(match)
-                if tp_value > 0 and tp_value not in tp_levels:
-                    tp_levels.append(tp_value)
+            tp_match = re.search(r'TP[:\s]*([0-9.]+)', text)
+            if tp_match:
+                tp_levels.append(float(tp_match.group(1)))
         
         # Extract SL
         sl = extract_price(r'SL[:\s]+([0-9.]+)') or extract_price(r'STOP LOSS[:\s]+([0-9.]+)')
@@ -515,7 +518,7 @@ def parse_signal(caption):
         # Calculate RR ratio based on first TP
         rr_ratio = round(abs(tp_levels[0] - entry) / abs(entry - sl), 2) if sl != 0 else 0
 
-        logger.info(f"PARSED SUCCESS → {direction} {symbol} | Entry: {entry} | Real Volume: {real_volume} lots | Real Risk: ${real_risk}")
+        logger.info(f"PARSED SUCCESS → {direction} {symbol} | Entry: {entry} | Order Type: {order_type} | Real TP Levels: {len(tp_levels)}")
 
         return {
             'symbol': symbol,
@@ -523,6 +526,7 @@ def parse_signal(caption):
             'dir_text': dir_text,
             'emoji': emoji,
             'entry': entry,
+            'order_type': order_type,
             'tp_levels': tp_levels,
             'sl': sl,
             'current_price': current,
@@ -639,10 +643,10 @@ class InstitutionalAnalytics:
         }
 
 # =============================================================================
-# ENHANCED SIGNAL FORMATTING WITH REAL TRADING DATA
+# ENHANCED SIGNAL FORMATTING WITH REAL TRADING DATA AND ORDER TYPE
 # =============================================================================
 def format_institutional_signal(parsed):
-    """Enhanced signal formatting with REAL trading data and professional emojis"""
+    """Enhanced signal formatting with REAL trading data, order type, and dynamic TP display"""
     try:
         s = parsed['symbol']
         asset = get_asset_info(s)
@@ -655,13 +659,23 @@ def format_institutional_signal(parsed):
         current = parsed['current_price']
         real_volume = parsed['real_volume']
         real_risk = parsed['real_risk']
+        order_type = parsed['order_type']
 
-        # Build TP section with multiple levels
+        # Dynamic TP section based on actual TP levels count
         tp_section = ""
-        for i, tp in enumerate(tp_levels):
+        tp_count = len(tp_levels)
+        
+        if tp_count == 1:
+            # Single TP - show as "TP" without number
+            tp = tp_levels[0]
             pips_tp = int(round(abs(tp - entry) / pip))
-            tp_label = f"TP{i+1}" if len(tp_levels) > 1 else "TP"
-            tp_section += f"▪️ {tp_label}  <code>{tp:.{digits}f}</code> (+{pips_tp} pips)\n"
+            tp_section = f"▪️ TP  <code>{tp:.{digits}f}</code> (+{pips_tp} pips)\n"
+        else:
+            # Multiple TPs - show as TP1, TP2, TP3
+            for i, tp in enumerate(tp_levels):
+                pips_tp = int(round(abs(tp - entry) / pip))
+                tp_label = f"TP{i+1}"
+                tp_section += f"▪️ {tp_label}  <code>{tp:.{digits}f}</code> (+{pips_tp} pips)\n"
         
         # Calculate pips for SL
         pips_sl = int(round(abs(sl - entry) / pip))
@@ -724,7 +738,7 @@ def format_institutional_signal(parsed):
 ═══════════════════════════════════
 
 🎯 EXECUTION
-▪️ Entry <code>{entry:.{digits}f}</code>
+▪️ Entry <code>{entry:.{digits}f}</code> ({order_type})
 {tp_section}▪️ SL  <code>{sl:.{digits}f}</code> (-{pips_sl} pips)
 ▪️ Current <code>{current:.{digits}f}</code>
 
@@ -771,7 +785,7 @@ def format_institutional_signal(parsed):
 
 @app.route('/webhook', methods=['POST', 'GET'])
 def webhook():
-    """Enhanced webhook handler with REAL trading data"""
+    """Enhanced webhook handler with REAL trading data and order type"""
     
     logger.info("=== INSTITUTIONAL WEBHOOK REQUEST ===")
     
@@ -802,7 +816,7 @@ def webhook():
                     }), 400
                 
                 formatted_signal = format_institutional_signal(parsed_data)
-                logger.info(f"Institutional signal formatted for {parsed_data['symbol']} with {len(parsed_data['tp_levels'])} TP levels | Real Volume: {parsed_data['real_volume']} lots")
+                logger.info(f"Institutional signal formatted for {parsed_data['symbol']} with {len(parsed_data['tp_levels'])} TP levels | Order Type: {parsed_data['order_type']}")
                 
                 result = telegram_bot.send_message_safe(formatted_signal)
                 
@@ -812,9 +826,10 @@ def webhook():
                         "status": "success",
                         "message_id": result['message_id'],
                         "symbol": parsed_data['symbol'],
+                        "order_type": parsed_data['order_type'],
+                        "tp_levels_count": len(parsed_data['tp_levels']),
                         "real_volume": parsed_data['real_volume'],
                         "real_risk": parsed_data['real_risk'],
-                        "tp_levels": len(parsed_data['tp_levels']),
                         "mode": "institutional_text",
                         "timestamp": datetime.utcnow().isoformat() + 'Z'
                     }), 200
@@ -845,9 +860,10 @@ def webhook():
                 "status": "success",
                 "message_id": result['message_id'],
                 "symbol": parsed_data['symbol'],
+                "order_type": parsed_data['order_type'],
+                "tp_levels_count": len(parsed_data['tp_levels']),
                 "real_volume": parsed_data['real_volume'],
                 "real_risk": parsed_data['real_risk'],
-                "tp_levels": len(parsed_data['tp_levels']),
                 "timestamp": datetime.utcnow().isoformat() + 'Z'
             }), 200
         else:
@@ -879,7 +895,9 @@ def health():
             "fmp_api": "operational",
             "analytics_engine": "operational",
             "asset_config": f"{len(ASSET_CONFIG)} symbols configured",
-            "real_data_tracking": "ACTIVATED"
+            "real_data_tracking": "ACTIVATED",
+            "order_type_support": "ENABLED",
+            "dynamic_tp_display": "ACTIVE"
         }
         
         return jsonify(health_status), 200
@@ -894,29 +912,30 @@ def health():
 
 @app.route('/test-signal', methods=['GET'])
 def test_institutional_signal():
-    """Test institutional signal with REAL trading data"""
+    """Test institutional signal with REAL trading data and order type"""
     try:
         test_caption = """
 ▲ LONG GBPAUD
 FXWAVE INSTITUTIONAL DESK
 ═══════════════════════════════════
 
-ENTRY: 2.03902
-TP1: 2.01951
-TP2: 2.00000 
-TP3: 1.98049
-STOP LOSS: 2.05160
-CURRENT: 2.03076
+🎯 EXECUTION
+▪️ Entry 2.03902 (LIMIT)
+▪️ TP1  2.01951
+▪️ TP2  2.00000 
+▪️ SL  2.05160
+▪️ Current 2.03076
 
+⚡ RISK MANAGEMENT
+────────────────────────────
+▪️ Size  50.00 lots
+▪️ Risk  $40797
+
+📈 PRICE LEVELS
+────────────────────────────
 DAILY_HIGH: 2.04500
 DAILY_LOW: 2.02500  
 DAILY_CLOSE: 2.03500
-
-RISK & REWARD
-────────────────────────────
-• Position Size: 50.00 lots
-• Risk Exposure: $40797
-• Account Risk: REAL DATA
         """
         
         parsed_data = parse_signal(test_caption)
@@ -933,9 +952,10 @@ RISK & REWARD
                 "message": "Institutional test signal sent",
                 "message_id": result['message_id'],
                 "symbol": "GBPAUD",
+                "order_type": parsed_data['order_type'],
+                "tp_levels_count": len(parsed_data['tp_levels']),
                 "real_volume": parsed_data['real_volume'],
-                "real_risk": parsed_data['real_risk'],
-                "tp_levels": len(parsed_data['tp_levels'])
+                "real_risk": parsed_data['real_risk']
             }), 200
         else:
             return jsonify({
@@ -951,7 +971,7 @@ RISK & REWARD
 
 @app.route('/')
 def home():
-    return "FXWave Institutional Signals v3.0 - Real Data Tracking ACTIVATED"
+    return "FXWave Institutional Signals v3.0 - Real Data Tracking & Order Type Support ACTIVATED"
 
 # =============================================================================
 # INSTITUTIONAL SYSTEM STARTUP
@@ -959,7 +979,8 @@ def home():
 if __name__ == '__main__':
     logger.info("Starting FXWave Institutional Signals Bridge v3.0")
     logger.info("Enhanced Institutional Analytics: ACTIVATED")
-    logger.info("Multiple TP Support: ENABLED")
+    logger.info("Dynamic TP Display: ENABLED")
+    logger.info("Order Type Support: ACTIVATED")
     logger.info("Real Trading Data Tracking: ACTIVATED")
     logger.info("Classic Pivot Calculation: IMPLEMENTED")
     logger.info(f"Configured Assets: {len(ASSET_CONFIG)} symbols")
