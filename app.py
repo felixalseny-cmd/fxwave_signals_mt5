@@ -433,15 +433,15 @@ class FinancialModelingPrep:
         """.strip()
 
 # =============================================================================
-# ENHANCED SIGNAL PARSING WITH REAL VOLUMES AND ORDER TYPE
+# ENHANCED SIGNAL PARSING WITH HTML SUPPORT
 # =============================================================================
 def parse_signal(caption):
-    """Enhanced parser for MQL5 format with REAL trading data and order type"""
+    """Enhanced parser for MQL5 HTML format with improved error handling"""
     try:
         logger.info(f"Parsing caption: {caption[:500]}...")
         
-        # Clean text
-        text = re.sub(r'[^\w\s\.\:\$\(\)]', ' ', caption)
+        # Clean text but preserve HTML tags for prices
+        text = re.sub(r'[^\w\s\.\:\$\(\)<>]', ' ', caption)
         text = re.sub(r'\s+', ' ', text).strip().upper()
 
         # Extract symbol using multiple patterns
@@ -456,69 +456,99 @@ def parse_signal(caption):
             logger.error("No symbol found")
             return None
 
-        # Extract direction
-        direction = "LONG" if "BUY" in text or "LONG" in text or "UP" in text else "SHORT" if "SELL" in text or "SHORT" in text or "DOWN" in text else "UNKNOWN"
-        emoji = "▲" if direction == "LONG" else "▼" if direction == "SHORT" else "●"
-        dir_text = "Up" if direction == "LONG" else "Down" if direction == "SHORT" else "Neutral"
+        # Extract direction from emoji
+        if "▲" in caption or "UP" in text:
+            direction = "LONG"
+            emoji = "▲"
+            dir_text = "Up"
+        elif "▼" in caption or "DOWN" in text:
+            direction = "SHORT" 
+            emoji = "▼"
+            dir_text = "Down"
+        else:
+            direction = "UNKNOWN"
+            emoji = "●"
+            dir_text = "Neutral"
 
-        # Extract entry price with order type
+        # Enhanced price extraction with HTML tag support
         def extract_price(pattern):
+            # Try HTML format first
+            html_pattern = pattern.replace('([0-9.]+)', '<code>([0-9.]+)</code>')
+            m = re.search(html_pattern, text)
+            if m:
+                return float(m.group(1))
+            
+            # Fallback to plain text
             m = re.search(pattern, text)
             return float(m.group(1)) if m else 0.0
 
+        # Extract entry price with order type
         entry = extract_price(r'ENTRY[:\s]+([0-9.]+)')
         
-        # Extract order type from entry line
+        # Extract order type
         order_type = "LIMIT"
         if "(LIMIT)" in caption.upper():
             order_type = "LIMIT"
         elif "(STOP)" in caption.upper():
             order_type = "STOP"
-        
-        # Extract TP levels - flexible parsing for 1, 2, or 3 TPs
+
+        # Extract TP levels - handle both numbered and unnumbered
         tp_levels = []
         
-        # Try to find TP1, TP2, TP3 first
-        tp1_match = re.search(r'TP1[:\s]*([0-9.]+)', text)
-        tp2_match = re.search(r'TP2[:\s]*([0-9.]+)', text) 
-        tp3_match = re.search(r'TP3[:\s]*([0-9.]+)', text)
-        
-        if tp1_match:
-            tp_levels.append(float(tp1_match.group(1)))
-        if tp2_match:
-            tp_levels.append(float(tp2_match.group(1)))
-        if tp3_match:
-            tp_levels.append(float(tp3_match.group(1)))
-        
-        # If no numbered TPs found, look for generic TP
-        if not tp_levels:
-            tp_match = re.search(r'TP[:\s]*([0-9.]+)', text)
+        # Try numbered TPs first (TP1, TP2, TP3)
+        for i in range(1, 4):
+            tp_pattern = r'TP' + str(i) + r'[:\s]*<code>([0-9.]+)</code>'
+            tp_match = re.search(tp_pattern, text)
             if tp_match:
                 tp_levels.append(float(tp_match.group(1)))
         
-        # Extract SL
+        # If no numbered TPs, try unnumbered TP
+        if not tp_levels:
+            tp_pattern = r'TP[:\s]*<code>([0-9.]+)</code>'
+            tp_match = re.search(tp_pattern, text)
+            if tp_match:
+                tp_levels.append(float(tp_match.group(1)))
+        
+        # Fallback to plain text without HTML
+        if not tp_levels:
+            for i in range(1, 4):
+                tp_pattern = r'TP' + str(i) + r'[:\s]*([0-9.]+)'
+                tp_match = re.search(tp_pattern, text)
+                if tp_match:
+                    tp_levels.append(float(tp_match.group(1)))
+            
+            if not tp_levels:
+                tp_match = re.search(r'TP[:\s]*([0-9.]+)', text)
+                if tp_match:
+                    tp_levels.append(float(tp_match.group(1)))
+
+        # Extract SL with HTML support
         sl = extract_price(r'SL[:\s]+([0-9.]+)') or extract_price(r'STOP LOSS[:\s]+([0-9.]+)')
         
         # Extract current price
         current = extract_price(r'CURRENT[:\s]+([0-9.]+)') or entry
         
         # Extract REAL trading data
-        real_volume = extract_price(r'SIZE[:\s]+([0-9.]+)') or 1.0
-        real_risk = extract_price(r'RISK[:\s]+\$([0-9.]+)') or 0.0
+        volume_match = re.search(r'SIZE[:\s]*([0-9.]+)', text)
+        real_volume = float(volume_match.group(1)) if volume_match else 1.0
+        
+        risk_match = re.search(r'RISK[:\s]*\$([0-9.]+)', text)
+        real_risk = float(risk_match.group(1)) if risk_match else 0.0
         
         # Extract daily data for pivot calculation
         daily_high = extract_price(r'DAILY_HIGH[:\s]+([0-9.]+)') or current * 1.01
         daily_low = extract_price(r'DAILY_LOW[:\s]+([0-9.]+)') or current * 0.99
         daily_close = extract_price(r'DAILY_CLOSE[:\s]+([0-9.]+)') or current
 
-        if not all([entry, sl]) or not tp_levels:
-            logger.error("Missing price data")
+        # Validate required data
+        if entry == 0 or sl == 0 or not tp_levels:
+            logger.error(f"Missing price data: Entry={entry}, SL={sl}, TP levels={tp_levels}")
             return None
 
         # Calculate RR ratio based on first TP
         rr_ratio = round(abs(tp_levels[0] - entry) / abs(entry - sl), 2) if sl != 0 else 0
 
-        logger.info(f"PARSED SUCCESS → {direction} {symbol} | Entry: {entry} | Order Type: {order_type} | Real TP Levels: {len(tp_levels)}")
+        logger.info(f"PARSED SUCCESS → {direction} {symbol} | Entry: {entry} | Order Type: {order_type} | TP Levels: {len(tp_levels)}")
 
         return {
             'symbol': symbol,
@@ -530,8 +560,8 @@ def parse_signal(caption):
             'tp_levels': tp_levels,
             'sl': sl,
             'current_price': current,
-            'real_volume': real_volume,  # REAL volume from MT5
-            'real_risk': real_risk,      # REAL risk in $
+            'real_volume': real_volume,
+            'real_risk': real_risk,
             'rr_ratio': rr_ratio,
             'daily_high': daily_high,
             'daily_low': daily_low,
@@ -540,6 +570,8 @@ def parse_signal(caption):
 
     except Exception as e:
         logger.error(f"Parse failed: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return None
 
 # =============================================================================
@@ -643,10 +675,10 @@ class InstitutionalAnalytics:
         }
 
 # =============================================================================
-# ENHANCED SIGNAL FORMATTING WITH REAL TRADING DATA AND ORDER TYPE
+# ENHANCED SIGNAL FORMATTING WITH HTML SUPPORT
 # =============================================================================
 def format_institutional_signal(parsed):
-    """Enhanced signal formatting with REAL trading data, order type, and dynamic TP display"""
+    """Enhanced signal formatting with HTML support for copy-paste"""
     try:
         s = parsed['symbol']
         asset = get_asset_info(s)
@@ -777,6 +809,8 @@ def format_institutional_signal(parsed):
         
     except Exception as e:
         logger.error(f"Formatting failed: {e}")
+        import traceback
+        logger.error(f"Formatting traceback: {traceback.format_exc()}")
         return f"Error formatting signal: {str(e)}"
 
 # =============================================================================
@@ -785,7 +819,7 @@ def format_institutional_signal(parsed):
 
 @app.route('/webhook', methods=['POST', 'GET'])
 def webhook():
-    """Enhanced webhook handler with REAL trading data and order type"""
+    """Enhanced webhook handler with HTML parsing support"""
     
     logger.info("=== INSTITUTIONAL WEBHOOK REQUEST ===")
     
@@ -793,7 +827,7 @@ def webhook():
         return jsonify({
             "status": "active", 
             "service": "FXWave Institutional Signals",
-            "version": "3.0",
+            "version": "3.1",
             "timestamp": datetime.utcnow().isoformat() + 'Z'
         }), 200
     
@@ -889,7 +923,7 @@ def health():
         health_status = {
             "status": "healthy" if test_result['status'] == 'success' else "degraded",
             "service": "FXWave Institutional Signals",
-            "version": "3.0",
+            "version": "3.1",
             "timestamp": datetime.utcnow().isoformat() + 'Z',
             "telegram": test_result['status'],
             "fmp_api": "operational",
@@ -897,7 +931,8 @@ def health():
             "asset_config": f"{len(ASSET_CONFIG)} symbols configured",
             "real_data_tracking": "ACTIVATED",
             "order_type_support": "ENABLED",
-            "dynamic_tp_display": "ACTIVE"
+            "dynamic_tp_display": "ACTIVE",
+            "html_parsing": "ENABLED"
         }
         
         return jsonify(health_status), 200
@@ -912,24 +947,23 @@ def health():
 
 @app.route('/test-signal', methods=['GET'])
 def test_institutional_signal():
-    """Test institutional signal with REAL trading data and order type"""
+    """Test institutional signal with HTML format"""
     try:
         test_caption = """
-▲ LONG GBPAUD
-FXWAVE INSTITUTIONAL DESK
+▼ Down GBPAUD
+🏛️ FXWAVE INSTITUTIONAL DESK
 ═══════════════════════════════════
 
 🎯 EXECUTION
-▪️ Entry 2.03902 (LIMIT)
-▪️ TP1  2.01951
-▪️ TP2  2.00000 
-▪️ SL  2.05160
-▪️ Current 2.03076
+▪️ Entry <code>2.03894</code> (LIMIT)
+▪️ TP <code>2.00000</code>
+▪️ SL <code>2.05160</code>
+▪️ Current <code>2.03307</code>
 
 ⚡ RISK MANAGEMENT
 ────────────────────────────
-▪️ Size  50.00 lots
-▪️ Risk  $40797
+▪️ Size 0.62 lots
+▪️ Risk $510
 
 📈 PRICE LEVELS
 ────────────────────────────
@@ -971,14 +1005,15 @@ DAILY_CLOSE: 2.03500
 
 @app.route('/')
 def home():
-    return "FXWave Institutional Signals v3.0 - Real Data Tracking & Order Type Support ACTIVATED"
+    return "FXWave Institutional Signals v3.1 - HTML Parsing & Enhanced Formatting ACTIVATED"
 
 # =============================================================================
 # INSTITUTIONAL SYSTEM STARTUP
 # =============================================================================
 if __name__ == '__main__':
-    logger.info("Starting FXWave Institutional Signals Bridge v3.0")
+    logger.info("Starting FXWave Institutional Signals Bridge v3.1")
     logger.info("Enhanced Institutional Analytics: ACTIVATED")
+    logger.info("HTML Parsing Support: ENABLED")
     logger.info("Dynamic TP Display: ENABLED")
     logger.info("Order Type Support: ACTIVATED")
     logger.info("Real Trading Data Tracking: ACTIVATED")
