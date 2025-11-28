@@ -611,14 +611,19 @@ class InstitutionalAnalytics:
 class EconomicCalendarService:
     """Professional economic calendar service with caching"""
     
-    # Используем бесплатный API ключ или отключаем FMP при ошибках 403
-    FMP_API_KEY = os.environ.get('FMP_API_KEY', 'demo')  # Используем 'demo' как fallback
+    # Используем API ключ из окружения или демо-ключ
+    FMP_API_KEY = os.environ.get('FMP_API_KEY', 'nZm3b15R1rJvjnUO67wPb0eaJHPXarK2')
     CACHE_DURATION = 3600  # 1 hour cache
     _cache = {}
+    _api_disabled = False  # Флаг для отключения API при частых ошибках
     
     @staticmethod
     def get_calendar_events(symbol, days=7):
         """Get economic calendar events with caching and fallback"""
+        # Если API отключено, сразу возвращаем fallback
+        if EconomicCalendarService._api_disabled:
+            return EconomicCalendarService._get_fallback_calendar(symbol)
+            
         cache_key = f"{symbol}_{datetime.now().strftime('%Y-%m-%d')}"
         
         # Check cache first
@@ -646,25 +651,36 @@ class EconomicCalendarService:
     def _fetch_from_api(symbol, days):
         """Fetch calendar data from Financial Modeling Prep API"""
         try:
-            # Если API ключ 'demo' или не указан, сразу используем fallback
-            if EconomicCalendarService.FMP_API_KEY == 'demo':
-                return None
-                
-            url = "https://financialmodelingprep.com/api/v3/economic_calendar"
-            params = {
-                'apikey': EconomicCalendarService.FMP_API_KEY,
-                'from': datetime.now().strftime('%Y-%m-%d'),
-                'to': (datetime.now() + timedelta(days=days)).strftime('%Y-%m-%d')
-            }
+            # Формируем URL с API ключом как требует FMP
+            base_url = "https://financialmodelingprep.com/api/v3/economic_calendar"
+            from_date = datetime.now().strftime('%Y-%m-%d')
+            to_date = (datetime.now() + timedelta(days=days)).strftime('%Y-%m-%d')
             
-            response = requests.get(url, params=params, timeout=10)
+            # Строим URL с параметрами через & как требует FMP
+            url = f"{base_url}?from={from_date}&to={to_date}&apikey={EconomicCalendarService.FMP_API_KEY}"
+            
+            logger.info(f"🔍 Fetching calendar data from FMP API for {symbol}")
+            
+            response = requests.get(url, timeout=10)
+            
             if response.status_code == 200:
                 events = response.json()
+                # Проверяем, не вернул ли API ошибку
+                if isinstance(events, dict) and 'Error Message' in events:
+                    logger.error(f"❌ FMP API error: {events.get('Error Message')}")
+                    EconomicCalendarService._api_disabled = True
+                    return None
+                    
                 filtered_events = EconomicCalendarService._filter_events_for_symbol(events, symbol)
                 return EconomicCalendarService._format_events(filtered_events)
             
-            logger.warning(f"⚠️ FMP API returned status {response.status_code}")
-            return None
+            elif response.status_code == 403:
+                logger.error(f"❌ FMP API access forbidden (403). Disabling API for this session.")
+                EconomicCalendarService._api_disabled = True
+                return None
+            else:
+                logger.warning(f"⚠️ FMP API returned status {response.status_code}")
+                return None
             
         except Exception as e:
             logger.error(f"❌ FMP API connection failed: {e}")
@@ -673,26 +689,61 @@ class EconomicCalendarService:
     @staticmethod
     def _filter_events_for_symbol(events, symbol):
         """Filter events relevant to the symbol"""
-        if not events:
+        if not events or not isinstance(events, list):
             return []
             
         currency_map = {
-            'EURUSD': ['EUR', 'USD', 'EUROZONE'],
-            'GBPUSD': ['GBP', 'USD', 'UK'],
+            'EURUSD': ['EUR', 'USD', 'EUROZONE', 'GERMANY', 'FRANCE'],
+            'GBPUSD': ['GBP', 'USD', 'UK', 'UNITED KINGDOM'],
             'USDJPY': ['USD', 'JPY', 'JAPAN'],
+            'AUDUSD': ['AUD', 'USD', 'AUSTRALIA'],
+            'USDCAD': ['USD', 'CAD', 'CANADA'],
             'CADJPY': ['CAD', 'JPY', 'CANADA', 'JAPAN'],
-            # ... include all symbols from ASSET_CONFIG
+            'XAUUSD': ['USD', 'GOLD', 'XAU', 'FED', 'INFLATION'],
+            'BTCUSD': ['USD', 'BTC', 'CRYPTO', 'BITCOIN'],
+            'USDCHF': ['USD', 'CHF', 'SWITZERLAND'],
+            'NZDUSD': ['NZD', 'USD', 'NEW ZEALAND'],
+            'GBPAUD': ['GBP', 'AUD', 'UK', 'AUSTRALIA'],
+            'EURGBP': ['EUR', 'GBP', 'EUROZONE', 'UK'],
+            'AUDJPY': ['AUD', 'JPY', 'AUSTRALIA', 'JAPAN'],
+            'EURJPY': ['EUR', 'JPY', 'EUROZONE', 'JAPAN'],
+            'GBPJPY': ['GBP', 'JPY', 'UK', 'JAPAN'],
+            'AUDCAD': ['AUD', 'CAD', 'AUSTRALIA', 'CANADA'],
+            'EURCAD': ['EUR', 'CAD', 'EUROZONE', 'CANADA'],
+            'GBPCAD': ['GBP', 'CAD', 'UK', 'CANADA'],
+            'EURAUD': ['EUR', 'AUD', 'EUROZONE', 'AUSTRALIA'],
+            'GBPCHF': ['GBP', 'CHF', 'UK', 'SWITZERLAND'],
+            'AUDCHF': ['AUD', 'CHF', 'AUSTRALIA', 'SWITZERLAND'],
+            'AUDNZD': ['AUD', 'NZD', 'AUSTRALIA', 'NEW ZEALAND'],
+            'NZDCAD': ['NZD', 'CAD', 'NEW ZEALAND', 'CANADA'],
+            'USDCNH': ['USD', 'CNH', 'CHINA'],
+            'USDSGD': ['USD', 'SGD', 'SINGAPORE'],
+            'USDHKD': ['USD', 'HKD', 'HONG KONG'],
+            'XAGUSD': ['XAG', 'SILVER', 'USD'],
+            'XPTUSD': ['XPT', 'PLATINUM', 'USD'],
+            'XPDUSD': ['XPD', 'PALLADIUM', 'USD'],
+            'USOIL': ['OIL', 'CRUDE', 'ENERGY', 'INVENTORIES'],
+            'UKOIL': ['OIL', 'BRENT', 'ENERGY', 'INVENTORIES'],
+            'NGAS': ['GAS', 'NATURAL', 'ENERGY', 'INVENTORIES'],
         }
         
         relevant_currencies = currency_map.get(symbol, [symbol[:3], symbol[3:6]])
         filtered_events = []
         
-        for event in events[:15]:  # Limit to first 15 events
+        for event in events[:20]:  # Limit to first 20 events
+            if not isinstance(event, dict):
+                continue
+                
             event_text = f"{event.get('country', '')} {event.get('event', '')} {event.get('currency', '')}".upper()
+            
+            # Check if event is relevant to symbol
             if any(currency in event_text for currency in relevant_currencies):
                 filtered_events.append(event)
+            # Also include high impact events regardless of currency
+            elif event.get('impact') == 'High':
+                filtered_events.append(event)
         
-        return filtered_events[:4]  # Return top 4 relevant events
+        return filtered_events[:5]  # Return top 5 relevant events
     
     @staticmethod
     def _format_events(events):
@@ -702,66 +753,103 @@ class EconomicCalendarService:
             
         formatted = []
         for event in events:
+            if not isinstance(event, dict):
+                continue
+                
             name = event.get('event', 'Economic Event')
             date_str = event.get('date', '')
             impact = event.get('impact', '').upper()
             
             try:
+                # Parse date - FMP format is usually 'YYYY-MM-DD HH:MM:SS'
                 event_date = datetime.strptime(date_str, '%Y-%m-%d %H:%M:%S')
                 day_time = event_date.strftime('%a %H:%M UTC')
             except:
                 day_time = "Time TBA"
             
-            impact_emoji = "🟢" if impact == "LOW" else "🟡" if impact == "MEDIUM" else "🔴"
+            # Map impact to emoji
+            impact_emoji = {
+                'LOW': '🟢',
+                'MEDIUM': '🟡', 
+                'HIGH': '🔴'
+            }.get(impact, '⚪')
             
             formatted.append(f"{impact_emoji} {name} - {day_time}")
         
-        return formatted
+        return formatted if formatted else None
     
     @staticmethod
     def _get_fallback_calendar(symbol):
-        """Comprehensive fallback calendar"""
+        """Comprehensive fallback calendar with detailed events"""
         fallback_events = {
             "CADJPY": [
                 "🏛️ BoC Rate Decision - Wed 15:00 UTC",
                 "📊 CAD Employment Change - Fri 13:30 UTC", 
                 "🏛️ BoJ Summary of Opinions - Tue 23:50 UTC",
-                "📊 Tokyo Core CPI - Fri 23:30 UTC"
+                "📊 Tokyo Core CPI - Fri 23:30 UTC",
+                "🌍 Global Risk Sentiment - Ongoing"
             ],
             "EURUSD": [
                 "🏛️ ECB President Speech - Tue 14:30 UTC",
                 "📊 EU Inflation Data - Wed 10:00 UTC",
                 "💼 EU GDP Release - Thu 10:00 UTC",
-                "🏦 Fed Policy Meeting - Wed 19:00 UTC"
+                "🏦 Fed Policy Meeting - Wed 19:00 UTC",
+                "📈 PMI Manufacturing Data - Mon 09:00 UTC"
             ],
             "GBPUSD": [
                 "🏛️ BOE Governor Testimony - Mon 14:00 UTC",
                 "📊 UK Jobs Report - Tue 08:30 UTC",
                 "💼 UK CPI Data - Wed 08:30 UTC", 
-                "🏦 BOE Rate Decision - Thu 12:00 UTC"
+                "🏦 BOE Rate Decision - Thu 12:00 UTC",
+                "📈 UK Retail Sales - Fri 09:30 UTC"
             ],
             "USDJPY": [
                 "🏛️ BOJ Policy Meeting - Tue 03:00 UTC",
                 "📊 US NFP Data - Fri 13:30 UTC",
                 "💼 US CPI Data - Wed 13:30 UTC",
-                "🏦 Fed Rate Decision - Wed 19:00 UTC"
+                "🏦 Fed Rate Decision - Wed 19:00 UTC",
+                "📊 Tokyo CPI - Thu 23:30 UTC"
             ],
             "XAUUSD": [
                 "🏛️ Fed Chair Speech - Tue 16:00 UTC", 
                 "📊 US Inflation Data - Wed 13:30 UTC",
                 "💼 US Retail Sales - Thu 13:30 UTC",
-                "🌍 Geopolitical Developments - Ongoing"
+                "🌍 Geopolitical Developments - Ongoing",
+                "💎 Central Bank Gold Reserves - Monthly"
             ],
-            # Добавьте остальные символы по необходимости
+            "BTCUSD": [
+                "🏛️ Regulatory Updates - Ongoing",
+                "📊 Institutional Flow Data - Daily",
+                "💼 Macro Correlation Shifts - Ongoing",
+                "🌍 Market Sentiment - Continuous",
+                "🔗 Network Hash Rate - Weekly"
+            ],
+            "AUDUSD": [
+                "🏛️ RBA Meeting Minutes - Tue 01:30 UTC",
+                "📊 AU Employment Data - Thu 01:30 UTC",
+                "💼 China PMI Data - Wed 03:00 UTC",
+                "🌏 Commodity Prices - Daily",
+                "📈 AU Retail Sales - Mon 01:30 UTC"
+            ],
+            "USDCAD": [
+                "🏛️ BoC Governor Speech - Tue 17:00 UTC",
+                "📊 CAD CPI Data - Wed 13:30 UTC",
+                "💼 US Durable Goods - Thu 13:30 UTC",
+                "🛢️ Oil Inventories - Wed 15:30 UTC",
+                "📈 Manufacturing Sales - Fri 13:30 UTC"
+            ],
+            # Добавьте другие символы по аналогии...
         }
         
-        return fallback_events.get(symbol, [
+        events = fallback_events.get(symbol, [
             "📊 Monitor Economic Indicators - Daily",
             "🏛️ Central Bank Announcements - Weekly", 
             "💼 Key Data Releases - Ongoing",
-            "🌍 Market Developments - Continuous"
+            "🌍 Market Developments - Continuous",
+            "📈 Technical Breakout Watch - Intraday"
         ])
-
+        
+        return events
 # =============================================================================
 # PROFESSIONAL SIGNAL FORMATTER
 # =============================================================================
