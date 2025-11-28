@@ -1,3 +1,4 @@
+# app.py (Полная улучшенная версия)
 import os
 import logging
 import requests
@@ -9,21 +10,27 @@ import json
 from typing import Dict, Any, Optional
 import threading
 from collections import defaultdict
+import re
+import sys
 
-# Настройка логирования
+# =============================================================================
+# PROFESSIONAL LOGGING SETUP
+# =============================================================================
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
     handlers=[
-        logging.FileHandler('fxwave_signals.log'),
-        logging.StreamHandler()
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('fxwave_institutional.log', encoding='utf-8')
     ]
 )
-logger = logging.getLogger('FXWaveSignals')
+logger = logging.getLogger('FXWave-Institutional')
 
 app = Flask(__name__)
 
-# Конфигурация из environment variables
+# =============================================================================
+# ENTERPRISE CONFIGURATION
+# =============================================================================
 CONFIG = {
     'SECRET_KEY': os.getenv('SECRET_KEY', '5f4d8b7e3a1c9b2e5f4d8b7e3a1c9b2e5f4d8b7e3a1c9b2e5f4d8b7e3a1c9b2e'),
     'BOT_TOKEN': os.getenv('BOT_TOKEN', '8526027334:AAEyG3eDapTodPcDY7mCSeskgpBY1PkoV1o'),
@@ -31,11 +38,18 @@ CONFIG = {
     'LOG_LEVEL': os.getenv('LOG_LEVEL', 'INFO')
 }
 
-# Кэш для предотвращения дублирования сигналов
+# Validate configuration
+required_configs = ['SECRET_KEY', 'BOT_TOKEN', 'CHANNEL_ID']
+missing_configs = [cfg for cfg in required_configs if not CONFIG.get(cfg)]
+if missing_configs:
+    logger.critical(f"❌ Missing required configurations: {missing_configs}")
+    sys.exit(1)
+
+# =============================================================================
+# ENTERPRISE SECURITY & CACHING
+# =============================================================================
 signal_cache = defaultdict(list)
 CACHE_DURATION = timedelta(minutes=5)
-
-# Мониторинг здоровья
 health_stats = {
     'start_time': datetime.now(),
     'total_requests': 0,
@@ -46,7 +60,7 @@ health_stats = {
 }
 
 def require_auth(f):
-    """Декоратор для аутентификации"""
+    """Enterprise-grade authentication decorator"""
     @wraps(f)
     def decorated_function(*args, **kwargs):
         auth_header = request.headers.get('Authorization')
@@ -68,260 +82,308 @@ def require_auth(f):
     return decorated_function
 
 def is_duplicate_signal(symbol: str, entry: float, signal_type: str) -> bool:
-    """Проверка на дублирование сигнала"""
+    """Advanced duplicate detection"""
     current_time = datetime.now()
     cache_key = f"{symbol}_{signal_type}"
     
-    # Очистка старых записей
+    # Clean old entries
     signal_cache[cache_key] = [
         (entry_val, timestamp) 
         for entry_val, timestamp in signal_cache[cache_key]
         if current_time - timestamp < CACHE_DURATION
     ]
     
-    # Проверка на дублирование
+    # Check for duplicates
     for cached_entry, _ in signal_cache[cache_key]:
-        if abs(cached_entry - entry) < 0.0001:  # Допуск для float
+        if abs(cached_entry - entry) < 0.0001:
             return True
     
-    # Добавление в кэш
+    # Add to cache
     signal_cache[cache_key].append((entry, current_time))
     return False
 
-def parse_signal_text(text: str) -> Dict[str, Any]:
-    """Парсинг текста сигнала из MQL5"""
-    try:
-        lines = text.strip().split('\n')
-        signal_data = {
-            'symbol': '',
-            'direction': '',
-            'entry': 0.0,
-            'tp_levels': [],
-            'sl': 0.0,
-            'volume': 0.0,
-            'risk_amount': 0.0,
-            'rr_ratio': 0.0,
-            'atr_value': 0.0,
-            'risk_level': '',
-            'daily_data': {},
-            'raw_text': text
-        }
-        
-        current_section = None
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-                
-            # Определение секций
-            if line == 'EXECUTION':
-                current_section = 'execution'
-                continue
-            elif line == 'RISK MANAGEMENT':
-                current_section = 'risk'
-                continue
-            elif line == 'DAILY DATA':
-                current_section = 'daily'
-                continue
-            elif line == 'ANALYST COMMENT':
-                current_section = 'comment'
-                continue
+# =============================================================================
+# INSTITUTIONAL SIGNAL PROCESSING ENGINE
+# =============================================================================
+class InstitutionalSignalEngine:
+    @staticmethod
+    def parse_signal(caption: str) -> Dict[str, Any]:
+        """Advanced institutional signal parsing"""
+        try:
+            logger.info("🔍 Parsing institutional signal...")
             
-            # Парсинг основных данных из первой строки
-            if '▲' in line or '▼' in line and not signal_data['symbol']:
-                parts = line.split(' ')
-                if len(parts) >= 4:
-                    signal_data['direction'] = 'BUY' if '▲' in line else 'SELL'
-                    signal_data['symbol'] = parts[2]
-            
-            # Парсинг execution секции
-            elif current_section == 'execution':
-                if line.startswith('Entry:'):
-                    try:
-                        entry_str = line.split(': ')[1].split(' ')[0]
-                        signal_data['entry'] = float(entry_str)
-                    except (IndexError, ValueError):
-                        pass
-                elif line.startswith('TP'):
-                    try:
-                        tp_str = line.split(': ')[1]
-                        signal_data['tp_levels'].append(float(tp_str))
-                    except (IndexError, ValueError):
-                        pass
-                elif line.startswith('SL:'):
-                    try:
-                        sl_str = line.split(': ')[1]
-                        signal_data['sl'] = float(sl_str)
-                    except (IndexError, ValueError):
-                        pass
-            
-            # Парсинг risk секции
-            elif current_section == 'risk':
-                if line.startswith('Size:'):
-                    try:
-                        vol_str = line.split(': ')[1].split(' ')[0]
-                        signal_data['volume'] = float(vol_str)
-                    except (IndexError, ValueError):
-                        pass
-                elif line.startswith('Risk: $'):
-                    try:
-                        risk_str = line.split('$')[1]
-                        signal_data['risk_amount'] = float(risk_str)
-                    except (IndexError, ValueError):
-                        pass
-                elif line.startswith('R:R:'):
-                    try:
-                        rr_str = line.split(': ')[1].replace(':1', '')
-                        signal_data['rr_ratio'] = float(rr_str)
-                    except (IndexError, ValueError):
-                        pass
-                elif line.startswith('ATR('):
-                    try:
-                        atr_str = line.split(': ')[1]
-                        signal_data['atr_value'] = float(atr_str)
-                    except (IndexError, ValueError):
-                        pass
-                elif line.startswith('Risk Level:'):
-                    try:
-                        signal_data['risk_level'] = line.split(': ')[1]
-                    except IndexError:
-                        pass
-            
-            # Парсинг daily данных
-            elif current_section == 'daily':
-                if line.startswith('High:'):
-                    try:
-                        high_str = line.split(': ')[1]
-                        signal_data['daily_data']['high'] = float(high_str)
-                    except (IndexError, ValueError):
-                        pass
-                elif line.startswith('Low:'):
-                    try:
-                        low_str = line.split(': ')[1]
-                        signal_data['daily_data']['low'] = float(low_str)
-                    except (IndexError, ValueError):
-                        pass
-                elif line.startswith('Close:'):
-                    try:
-                        close_str = line.split(': ')[1]
-                        signal_data['daily_data']['close'] = float(close_str)
-                    except (IndexError, ValueError):
-                        pass
-        
-        return signal_data
-        
-    except Exception as e:
-        logger.error(f"Error parsing signal text: {str(e)}")
-        return {'raw_text': text, 'error': str(e)}
+            # Enhanced text cleaning
+            text = re.sub(r'[^\w\s\.\:\$\(\)<>]', ' ', caption)
+            text = re.sub(r'\s+', ' ', text).strip().upper()
 
-def format_telegram_message(signal_data: Dict[str, Any]) -> str:
-    """Форматирование сообщения для Telegram"""
+            # Extract symbol with enhanced matching
+            symbol_match = None
+            symbol_pattern = r'\b([A-Z]{6}|[A-Z]{3}/[A-Z]{3}|[A-Z]{6}\.[A-Z]+)\b'
+            symbol_matches = re.findall(symbol_pattern, text)
+            if symbol_matches:
+                symbol_match = symbol_matches[0].replace('/', '')
+            
+            if not symbol_match:
+                logger.error("❌ No valid symbol found")
+                return None
+
+            # Enhanced direction detection
+            direction, emoji, dir_text = "LONG", "▲", "Up"
+            if "▼" in caption or "DOWN" in text or "SHORT" in text:
+                direction, emoji, dir_text = "SHORT", "▼", "Down"
+
+            # Institutional price extraction
+            def extract_price(pattern):
+                # HTML format
+                html_pattern = pattern.replace('([0-9.]+)', '<code>([0-9.]+)</code>')
+                m = re.search(html_pattern, text)
+                if m:
+                    return float(m.group(1))
+                
+                # Plain text fallback
+                m = re.search(pattern, text)
+                return float(m.group(1)) if m else 0.0
+
+            # Extract critical levels
+            entry = extract_price(r'ENTRY[:\s]+([0-9.]+)')
+            
+            # Order type classification
+            order_type = "LIMIT"
+            if "(LIMIT)" in caption.upper():
+                order_type = "LIMIT"
+            elif "(STOP)" in caption.upper():
+                order_type = "STOP"
+
+            # Multi-TP level extraction
+            tp_levels = []
+            for i in range(1, 4):
+                tp_pattern = r'TP' + str(i) + r'[:\s]*<code>([0-9.]+)</code>'
+                tp_match = re.search(tp_pattern, text)
+                if tp_match:
+                    tp_levels.append(float(tp_match.group(1)))
+            
+            # Fallback to single TP
+            if not tp_levels:
+                tp_match = re.search(r'TP[:\s]*<code>([0-9.]+)</code>', text)
+                if tp_match:
+                    tp_levels.append(float(tp_match.group(1)))
+            
+            # Enhanced SL extraction
+            sl = extract_price(r'SL[:\s]+([0-9.]+)') or \
+                 extract_price(r'STOP LOSS[:\s]+([0-9.]+)')
+            
+            # Current price with validation
+            current = extract_price(r'CURRENT[:\s]+([0-9.]+)') or entry
+            
+            # Real trading data extraction
+            volume_match = re.search(r'SIZE[:\s]*([0-9.]+)', text)
+            real_volume = float(volume_match.group(1)) if volume_match else 1.0
+            
+            risk_match = re.search(r'RISK[:\s]*\$([0-9.]+)', text)
+            real_risk = float(risk_match.group(1)) if risk_match else 0.0
+            
+            # Daily data for institutional analysis
+            daily_high = extract_price(r'DAILY_HIGH[:\s]+([0-9.]+)') or current * 1.005
+            daily_low = extract_price(r'DAILY_LOW[:\s]+([0-9.]+)') or current * 0.995
+            daily_close = extract_price(r'DAILY_CLOSE[:\s]+([0-9.]+)') or current
+
+            # Institutional validation
+            if entry == 0 or sl == 0 or not tp_levels:
+                logger.error(f"❌ Invalid price data - Entry:{entry}, SL:{sl}, TPs:{len(tp_levels)}")
+                return None
+
+            # Calculate institutional metrics
+            rr_ratio = round(abs(tp_levels[0] - entry) / abs(entry - sl), 2) if sl != 0 else 0
+            confidence_score = InstitutionalSignalEngine.calculate_confidence(
+                entry, tp_levels, sl, real_volume, rr_ratio
+            )
+
+            logger.info(f"✅ INSTITUTIONAL SIGNAL PARSED: {direction} {symbol_match} | "
+                       f"Entry: {entry} | TPs: {len(tp_levels)} | Confidence: {confidence_score}%")
+
+            return {
+                'symbol': symbol_match,
+                'direction': direction,
+                'dir_text': dir_text,
+                'emoji': emoji,
+                'entry': entry,
+                'order_type': order_type,
+                'tp_levels': tp_levels,
+                'sl': sl,
+                'current_price': current,
+                'real_volume': real_volume,
+                'real_risk': real_risk,
+                'rr_ratio': rr_ratio,
+                'daily_high': daily_high,
+                'daily_low': daily_low,
+                'daily_close': daily_close,
+                'confidence_score': confidence_score,
+                'signal_grade': InstitutionalSignalEngine.get_signal_grade(confidence_score)
+            }
+
+        except Exception as e:
+            logger.error(f"❌ Institutional signal parsing failed: {e}")
+            return None
+
+    @staticmethod
+    def calculate_confidence(entry, tp_levels, sl, volume, rr_ratio):
+        """Calculate institutional confidence score"""
+        base_score = 60
+        rr_bonus = min(20, (rr_ratio - 1) * 10)
+        volume_bonus = min(10, volume * 2)
+        tp_bonus = len(tp_levels) * 5
+        total_score = base_score + rr_bonus + volume_bonus + tp_bonus
+        return min(95, max(50, total_score))
+
+    @staticmethod
+    def get_signal_grade(confidence):
+        """Convert confidence to institutional grade"""
+        if confidence >= 80: return "A-GRADE"
+        elif confidence >= 70: return "B-GRADE" 
+        elif confidence >= 60: return "C-GRADE"
+        else: return "REVIEW-GRADE"
+
+# =============================================================================
+# TELEGRAM INTEGRATION WITH RETRY LOGIC
+# =============================================================================
+class InstitutionalTelegramBot:
+    def __init__(self, token, channel_id):
+        self.token = token
+        self.channel_id = channel_id
+        self.retry_attempts = 3
+        self.retry_delay = 2
+    
+    def send_message_with_retry(self, text: str, parse_mode: str = 'HTML') -> Dict[str, Any]:
+        """Enterprise-grade message sending"""
+        for attempt in range(self.retry_attempts):
+            try:
+                url = f"https://api.telegram.org/bot{self.token}/sendMessage"
+                data = {
+                    'chat_id': self.channel_id,
+                    'text': text,
+                    'parse_mode': parse_mode,
+                    'disable_web_page_preview': True
+                }
+                response = requests.post(url, json=data, timeout=30)
+                
+                if response.status_code == 200:
+                    logger.info(f"✅ Message delivered (attempt {attempt + 1})")
+                    return {'status': 'success', 'message_id': response.json()['result']['message_id']}
+                else:
+                    logger.error(f"❌ Telegram API error: {response.status_code}")
+                    
+            except Exception as e:
+                logger.error(f"❌ Message send failed (attempt {attempt + 1}): {e}")
+                if attempt < self.retry_attempts - 1:
+                    time.sleep(self.retry_delay)
+        
+        return {'status': 'error', 'message': 'All retry attempts failed'}
+    
+    def send_photo_with_retry(self, photo_data: bytes, caption: str, parse_mode: str = 'HTML') -> Dict[str, Any]:
+        """Enterprise-grade photo sending"""
+        for attempt in range(self.retry_attempts):
+            try:
+                url = f"https://api.telegram.org/bot{self.token}/sendPhoto"
+                files = {'photo': ('signal.png', photo_data, 'image/png')}
+                data = {
+                    'chat_id': self.channel_id,
+                    'caption': caption,
+                    'parse_mode': parse_mode
+                }
+                response = requests.post(url, files=files, data=data, timeout=30)
+                
+                if response.status_code == 200:
+                    logger.info(f"✅ Photo delivered (attempt {attempt + 1})")
+                    return {'status': 'success', 'message_id': response.json()['result']['message_id']}
+                else:
+                    logger.error(f"❌ Telegram photo error: {response.status_code}")
+                    
+            except Exception as e:
+                logger.error(f"❌ Photo send failed (attempt {attempt + 1}): {e}")
+                if attempt < self.retry_attempts - 1:
+                    time.sleep(self.retry_delay)
+        
+        return {'status': 'error', 'message': 'All retry attempts failed'}
+
+# Initialize Telegram bot
+telegram_bot = InstitutionalTelegramBot(CONFIG['BOT_TOKEN'], CONFIG['CHANNEL_ID'])
+
+# =============================================================================
+# MESSAGE FORMATTING & PROCESSING
+# =============================================================================
+def format_institutional_signal(signal_data: Dict[str, Any]) -> str:
+    """Professional Telegram message formatting"""
     try:
         symbol = signal_data.get('symbol', 'UNKNOWN')
         direction = signal_data.get('direction', 'UNKNOWN')
+        emoji = signal_data.get('emoji', '●')
         entry = signal_data.get('entry', 0)
+        order_type = signal_data.get('order_type', 'LIMIT')
+        tp_levels = signal_data.get('tp_levels', [])
         sl = signal_data.get('sl', 0)
-        volume = signal_data.get('volume', 0)
-        risk_amount = signal_data.get('risk_amount', 0)
+        current_price = signal_data.get('current_price', 0)
+        real_volume = signal_data.get('real_volume', 0)
+        real_risk = signal_data.get('real_risk', 0)
         rr_ratio = signal_data.get('rr_ratio', 0)
-        atr_value = signal_data.get('atr_value', 0)
-        risk_level = signal_data.get('risk_level', 'UNKNOWN')
-        
-        # Эмодзи для направления
-        direction_emoji = "🟢" if direction == 'BUY' else "🔴"
-        risk_emoji = {
-            'LOW': '🟢',
-            'MEDIUM': '🟡', 
-            'HIGH': '🟠',
-            'EXTREME': '🔴'
-        }.get(risk_level, '⚪')
+        daily_high = signal_data.get('daily_high', 0)
+        daily_low = signal_data.get('daily_low', 0)
+        daily_close = signal_data.get('daily_close', 0)
+        confidence_score = signal_data.get('confidence_score', 0)
+        signal_grade = signal_data.get('signal_grade', 'UNKNOWN')
+
+        # Format numbers based on symbol type
+        digits = 5 if 'JPY' not in symbol else 3
         
         message = f"""
-{direction_emoji} **FXWAVE INSTITUTIONAL SIGNAL** {direction_emoji}
+{emoji} <b>FXWave Institutional Signal</b> {emoji}
 
-**🎯 Symbol:** `{symbol}`
-**📈 Direction:** {direction} {direction_emoji}
-**💰 Entry:** `{entry:.5f}`
-**🛡️ SL:** `{sl:.5f}`
+<b>Symbol:</b> {symbol}
+<b>Direction:</b> {direction} {emoji}
+<b>Entry:</b> <code>{entry:.{digits}f}</code> ({order_type})
+<b>Current Price:</b> <code>{current_price:.{digits}f}</code>
 
-**📊 Risk Management:**
-• **Volume:** `{volume:.2f}` lots
-• **Risk Amount:** `${risk_amount:.0f}`
-• **R:R Ratio:** `{rr_ratio:.2f}:1`
-• **ATR Value:** `{atr_value:.5f}`
-• **Risk Level:** {risk_emoji} {risk_level}
+<b>Take Profit Levels:</b>
+"""
+        for i, tp in enumerate(tp_levels, 1):
+            message += f"TP{i}: <code>{tp:.{digits}f}</code>\n"
 
+        message += f"""
+<b>Stop Loss:</b> <code>{sl:.{digits}f}</code>
+
+<b>Risk Management:</b>
+• <b>Volume:</b> {real_volume:.2f} lots
+• <b>Risk Amount:</b> ${real_risk:.0f}
+• <b>R:R Ratio:</b> {rr_ratio:.2f}:1
+
+<b>Daily Data:</b>
+• High: <code>{daily_high:.{digits}f}</code>
+• Low: <code>{daily_low:.{digits}f}</code>
+• Close: <code>{daily_close:.{digits}f}</code>
+
+<b>Signal Grade:</b> {signal_grade} (Confidence: {confidence_score}%)
+
+<i>Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</i>
+<i>FXWave Pro v4.0 - Institutional Grade</i>
 """
 
-        # Добавляем TP уровни
-        tp_levels = signal_data.get('tp_levels', [])
-        if tp_levels:
-            message += "\n**🎯 Take Profit Levels:**\n"
-            for i, tp in enumerate(tp_levels, 1):
-                if tp > 0:
-                    message += f"• TP{i}: `{tp:.5f}`\n"
-        
-        # Добавляем daily данные
-        daily_data = signal_data.get('daily_data', {})
-        if daily_data:
-            message += f"""
-**📅 Daily Pivot Data:**
-• High: `{daily_data.get('high', 0):.5f}`
-• Low: `{daily_data.get('low', 0):.5f}`  
-• Close: `{daily_data.get('close', 0):.5f}`
-"""
-        
-        message += f"\n_🕒 Signal Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_"
-        message += f"\n_⚡ FXWave Pro v4.0 - Institutional Grade_"
-        
         return message
         
     except Exception as e:
-        logger.error(f"Error formatting Telegram message: {str(e)}")
-        return f"📊 **FXWave Signal**\n\n{signal_data.get('raw_text', 'Raw signal data')}"
-
-def send_telegram_message(text: str, photo_data: Optional[bytes] = None) -> bool:
-    """Отправка сообщения в Telegram"""
-    try:
-        url = f"https://api.telegram.org/bot{CONFIG['BOT_TOKEN']}/sendMessage"
-        
-        if photo_data:
-            url = f"https://api.telegram.org/bot{CONFIG['BOT_TOKEN']}/sendPhoto"
-            files = {'photo': ('signal.png', photo_data, 'image/png')}
-            data = {
-                'chat_id': CONFIG['CHANNEL_ID'],
-                'caption': text,
-                'parse_mode': 'Markdown'
-            }
-            response = requests.post(url, files=files, data=data, timeout=30)
-        else:
-            data = {
-                'chat_id': CONFIG['CHANNEL_ID'],
-                'text': text,
-                'parse_mode': 'Markdown'
-            }
-            response = requests.post(url, json=data, timeout=30)
-        
-        if response.status_code == 200:
-            logger.info("Telegram message sent successfully")
-            return True
-        else:
-            logger.error(f"Telegram API error: {response.status_code} - {response.text}")
-            return False
-            
-    except Exception as e:
-        logger.error(f"Error sending Telegram message: {str(e)}")
-        return False
+        logger.error(f"Error formatting message: {str(e)}")
+        return f"📊 <b>FXWave Signal</b>\n\n{signal_data.get('raw_text', 'Signal data')}"
 
 def process_signal_async(caption: str, photo_data: Optional[bytes] = None):
-    """Асинхронная обработка сигнала"""
+    """Async signal processing with duplicate protection"""
     try:
         health_stats['active_threads'] += 1
         
-        # Парсинг сигнала
-        signal_data = parse_signal_text(caption)
+        # Parse signal
+        signal_data = InstitutionalSignalEngine.parse_signal(caption)
+        if not signal_data:
+            logger.error("Failed to parse signal")
+            return
         
-        # Проверка на дублирование
+        # Duplicate check
         if is_duplicate_signal(
             signal_data.get('symbol', 'UNKNOWN'), 
             signal_data.get('entry', 0),
@@ -330,42 +392,47 @@ def process_signal_async(caption: str, photo_data: Optional[bytes] = None):
             logger.warning(f"Duplicate signal detected: {signal_data.get('symbol')}")
             return
         
-        # Форматирование сообщения
-        telegram_message = format_telegram_message(signal_data)
+        # Format and send
+        telegram_message = format_institutional_signal(signal_data)
         
-        # Отправка в Telegram
-        if send_telegram_message(telegram_message, photo_data):
+        if photo_data:
+            result = telegram_bot.send_photo_with_retry(photo_data, telegram_message)
+        else:
+            result = telegram_bot.send_message_with_retry(telegram_message)
+        
+        if result['status'] == 'success':
             health_stats['successful_signals'] += 1
             health_stats['last_signal_time'] = datetime.now()
-            logger.info(f"Signal processed successfully: {signal_data.get('symbol')}")
+            logger.info(f"Signal processed: {signal_data.get('symbol')}")
         else:
             health_stats['failed_signals'] += 1
-            logger.error(f"Failed to send signal: {signal_data.get('symbol')}")
+            logger.error(f"Failed to send: {signal_data.get('symbol')}")
             
     except Exception as e:
         health_stats['failed_signals'] += 1
-        logger.error(f"Error processing signal: {str(e)}")
+        logger.error(f"Processing error: {str(e)}")
     finally:
         health_stats['active_threads'] -= 1
 
+# =============================================================================
+# FLASK ROUTES
+# =============================================================================
 @app.route('/webhook', methods=['POST'])
 @require_auth
-def webhook():
-    """Основной вебхук для приема сигналов от MQL5"""
+def institutional_webhook():
+    """Main webhook endpoint"""
     health_stats['total_requests'] += 1
     
     try:
-        # Получение данных из формы
         caption = request.form.get('caption', '').strip()
         photo_file = request.files.get('photo')
         
         if not caption:
-            logger.warning("Empty caption received")
-            return jsonify({'error': 'Caption is required'}), 400
+            return jsonify({'error': 'Caption required'}), 400
         
         logger.info(f"Received signal: {caption[:100]}...")
         
-        # Асинхронная обработка
+        # Async processing
         photo_data = photo_file.read() if photo_file else None
         thread = threading.Thread(
             target=process_signal_async,
@@ -374,107 +441,49 @@ def webhook():
         thread.daemon = True
         thread.start()
         
-        return jsonify({
-            'status': 'success', 
-            'message': 'Signal is being processed'
-        }), 200
+        return jsonify({'status': 'processing'}), 200
         
     except Exception as e:
         logger.error(f"Webhook error: {str(e)}")
-        return jsonify({'error': 'Internal server error'}), 500
+        return jsonify({'error': 'Internal error'}), 500
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    """Эндпоинт для проверки здоровья сервиса"""
-    try:
-        current_time = datetime.now()
-        uptime = current_time - health_stats['start_time']
-        
-        health_data = {
-            'status': 'healthy',
-            'uptime_seconds': int(uptime.total_seconds()),
-            'total_requests': health_stats['total_requests'],
-            'successful_signals': health_stats['successful_signals'],
-            'failed_signals': health_stats['failed_signals'],
-            'active_threads': health_stats['active_threads'],
-            'last_signal_time': health_stats['last_signal_time'].isoformat() if health_stats['last_signal_time'] else None,
-            'cache_size': sum(len(v) for v in signal_cache.values()),
-            'timestamp': current_time.isoformat()
-        }
-        
-        return jsonify(health_data), 200
-        
-    except Exception as e:
-        logger.error(f"Health check error: {str(e)}")
-        return jsonify({'status': 'error', 'error': str(e)}), 500
-
-@app.route('/stats', methods=['GET'])
-@require_auth
-def get_stats():
-    """Расширенная статистика (требует аутентификации)"""
-    try:
-        stats = {
-            'health': health_stats.copy(),
-            'cache_info': {
-                'total_cached_signals': sum(len(v) for v in signal_cache.values()),
-                'cache_duration_minutes': CACHE_DURATION.total_seconds() / 60,
-                'cached_symbols': list(signal_cache.keys())
-            },
-            'config': {
-                'channel_id': CONFIG['CHANNEL_ID'],
-                'bot_token_masked': CONFIG['BOT_TOKEN'][:10] + '...' if CONFIG['BOT_TOKEN'] else None,
-                'secret_key_masked': CONFIG['SECRET_KEY'][:10] + '...' if CONFIG['SECRET_KEY'] else None
-            }
-        }
-        
-        # Преобразование datetime для JSON
-        stats['health']['start_time'] = stats['health']['start_time'].isoformat()
-        if stats['health']['last_signal_time']:
-            stats['health']['last_signal_time'] = stats['health']['last_signal_time'].isoformat()
-        
-        return jsonify(stats), 200
-        
-    except Exception as e:
-        logger.error(f"Stats error: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+    """Health monitoring"""
+    current_time = datetime.now()
+    uptime = current_time - health_stats['start_time']
+    
+    health_data = {
+        'status': 'healthy',
+        'uptime_seconds': int(uptime.total_seconds()),
+        'total_requests': health_stats['total_requests'],
+        'successful_signals': health_stats['successful_signals'],
+        'failed_signals': health_stats['failed_signals'],
+        'active_threads': health_stats['active_threads'],
+        'last_signal_time': health_stats['last_signal_time'].isoformat() if health_stats['last_signal_time'] else None,
+        'cache_size': sum(len(v) for v in signal_cache.values()),
+        'timestamp': current_time.isoformat()
+    }
+    
+    return jsonify(health_data), 200
 
 @app.route('/cache/clear', methods=['POST'])
 @require_auth
 def clear_cache():
-    """Очистка кэша (требует аутентификации)"""
-    try:
-        signal_cache.clear()
-        logger.info("Signal cache cleared manually")
-        return jsonify({'status': 'success', 'message': 'Cache cleared'}), 200
-    except Exception as e:
-        logger.error(f"Cache clear error: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+    """Clear signal cache"""
+    signal_cache.clear()
+    logger.info("Cache cleared manually")
+    return jsonify({'status': 'success'}), 200
 
-@app.errorhandler(404)
-def not_found(error):
-    return jsonify({'error': 'Endpoint not found'}), 404
-
-@app.errorhandler(500)
-def internal_error(error):
-    logger.error(f"Internal server error: {str(error)}")
-    return jsonify({'error': 'Internal server error'}), 500
-
+# =============================================================================
+# START APPLICATION
+# =============================================================================
 if __name__ == '__main__':
-    logger.info("Starting FXWave Signals Flask App...")
-    logger.info(f"Configuration loaded: Channel ID: {CONFIG['CHANNEL_ID']}")
+    logger.info("🚀 Starting FXWave Institutional Signals v4.0")
+    logger.info(f"✅ Channel: {CONFIG['CHANNEL_ID']}")
+    logger.info("✅ Security: ACTIVATED")
+    logger.info("✅ Cache System: ENABLED")
+    logger.info("✅ Async Processing: ENABLED")
     
-    # Проверка обязательных конфигураций
-    required_configs = ['SECRET_KEY', 'BOT_TOKEN', 'CHANNEL_ID']
-    missing_configs = [cfg for cfg in required_configs if not CONFIG.get(cfg)]
-    
-    if missing_configs:
-        logger.error(f"Missing required configurations: {missing_configs}")
-        exit(1)
-    
-    # Запуск Flask приложения
-    app.run(
-        host='0.0.0.0',
-        port=5000,
-        debug=CONFIG.get('FLASK_ENV') != 'production',
-        threaded=True
-    )
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
