@@ -1154,16 +1154,18 @@ DAILY_CLOSE: 111.300
         }), 500
 
 @app.route('/')
+@app.route('/')
 def institutional_home():
-    return """
+    asset_count = len(ASSET_CONFIG)
+    return f"""
     <html>
         <head>
             <title>FXWave Institutional Signals</title>
             <style>
-                body { font-family: Arial, sans-serif; margin: 40px; }
-                .header { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
-                .status { color: #27ae60; font-weight: bold; }
-                .info { background: #f8f9fa; padding: 20px; border-radius: 5px; }
+                body {{ font-family: Arial, sans-serif; margin: 40px; }}
+                .header {{ color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }}
+                .status {{ color: #27ae60; font-weight: bold; }}
+                .info {{ background: #f8f9fa; padding: 20px; border-radius: 5px; }}
             </style>
         </head>
         <body>
@@ -1178,7 +1180,7 @@ def institutional_home():
                 <p>✅ HTML Formatting: OPERATIONAL</p>
                 <p>✅ Security Middleware: ACTIVE</p>
                 <p>✅ Economic Calendar: INTEGRATED</p>
-                <p>📊 Configured Assets: {} symbols</p>
+                <p>📊 Configured Assets: {asset_count} symbols</p>
             </div>
         </body>
     </html>
