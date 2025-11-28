@@ -1,708 +1,480 @@
-from flask import Flask, request, jsonify
-import telebot
 import os
 import logging
+import requests
+from flask import Flask, request, jsonify
 from datetime import datetime, timedelta
 import time
-import requests
-from threading import Thread
-import sys
-import re
-import math
-import random
-from PIL import Image, ImageDraw, ImageFont
-import io
-import base64
+from functools import wraps
+import json
+from typing import Dict, Any, Optional
+import threading
+from collections import defaultdict
 
-# =============================================================================
-# PROFESSIONAL LOGGING SETUP - INSTITUTIONAL GRADE
-# =============================================================================
+# Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler('institutional_signals.log', encoding='utf-8')
+        logging.FileHandler('fxwave_signals.log'),
+        logging.StreamHandler()
     ]
 )
-logger = logging.getLogger('FXWave-Institutional')
+logger = logging.getLogger('FXWaveSignals')
 
 app = Flask(__name__)
 
-# =============================================================================
-# ENVIRONMENT VALIDATION - ENTERPRISE GRADE
-# =============================================================================
-def validate_environment():
-    """Comprehensive environment validation"""
-    required_vars = ['BOT_TOKEN', 'CHANNEL_ID']
-    missing_vars = []
-    
-    for var in required_vars:
-        value = os.environ.get(var)
-        if not value:
-            missing_vars.append(var)
-        else:
-            masked_value = '*' * 8 + value[-4:] if len(value) > 8 else '***'
-            logger.info(f"✅ {var}: {masked_value}")
-    
-    if missing_vars:
-        logger.critical(f"❌ MISSING ENV VARIABLES: {missing_vars}")
-        return False
-    
-    # Validate optional FMP API key
-    fmp_key = os.environ.get('FMP_API_KEY')
-    if not fmp_key:
-        logger.warning("⚠️ FMP_API_KEY not set - using fallback economic calendar")
-    
-    return True
-
-if not validate_environment():
-    logger.critical("❌ SHUTDOWN: Invalid environment configuration")
-    sys.exit(1)
-
-# =============================================================================
-# ENTERPRISE-GRADE TELEGRAM BOT WITH RETRY LOGIC
-# =============================================================================
-BOT_TOKEN = os.environ.get('BOT_TOKEN')
-CHANNEL_ID = os.environ.get('CHANNEL_ID')
-
-class InstitutionalTelegramBot:
-    def __init__(self, token, channel_id):
-        self.token = token
-        self.channel_id = channel_id
-        self.bot = None
-        self.bot_info = None
-        self.initialize_bot()
-        self.retry_attempts = 3
-        self.retry_delay = 2
-    
-    def initialize_bot(self):
-        """Enterprise-grade bot initialization with circuit breaker"""
-        for attempt in range(3):
-            try:
-                logger.info(f"🔄 Initializing Telegram Bot (attempt {attempt + 1})...")
-                self.bot = telebot.TeleBot(self.token, threaded=False)
-                self.bot_info = self.bot.get_me()
-                
-                logger.info(f"✅ Telegram Bot Initialized: @{self.bot_info.username}")
-                logger.info(f"📊 Bot ID: {self.bot_info.id}")
-                logger.info(f"📈 Channel ID: {self.channel_id}")
-                return True
-                
-            except Exception as e:
-                logger.error(f"❌ Bot Initialization Failed (attempt {attempt + 1}): {e}")
-                if attempt < 2:
-                    time.sleep(2)
-        
-        logger.critical("💥 CRITICAL: Telegram bot initialization failed")
-        return False
-    
-    def send_message_with_retry(self, text, parse_mode='HTML'):
-        """Enterprise-grade message sending with retry logic"""
-        for attempt in range(self.retry_attempts):
-            try:
-                result = self.bot.send_message(
-                    chat_id=self.channel_id,
-                    text=text,
-                    parse_mode=parse_mode,
-                    timeout=30,
-                    disable_web_page_preview=True
-                )
-                logger.info(f"✅ Message delivered (attempt {attempt + 1}): {result.message_id}")
-                return {'status': 'success', 'message_id': result.message_id}
-                
-            except Exception as e:
-                logger.error(f"❌ Message send failed (attempt {attempt + 1}): {e}")
-                if attempt < self.retry_attempts - 1:
-                    time.sleep(self.retry_delay)
-        
-        return {'status': 'error', 'message': 'All retry attempts failed'}
-    
-    def send_photo_with_retry(self, photo_data, caption, parse_mode='HTML'):
-        """Enterprise-grade photo sending with retry logic"""
-        for attempt in range(self.retry_attempts):
-            try:
-                # Handle both file paths and bytes
-                if isinstance(photo_data, bytes):
-                    result = self.bot.send_photo(
-                        chat_id=self.channel_id,
-                        photo=photo_data,
-                        caption=caption,
-                        parse_mode=parse_mode,
-                        timeout=30
-                    )
-                else:
-                    # Original file object logic
-                    result = self.bot.send_photo(
-                        chat_id=self.channel_id,
-                        photo=photo_data,
-                        caption=caption,
-                        parse_mode=parse_mode,
-                        timeout=30
-                    )
-                
-                logger.info(f"✅ Photo delivered (attempt {attempt + 1}): {result.message_id}")
-                return {'status': 'success', 'message_id': result.message_id}
-                
-            except Exception as e:
-                logger.error(f"❌ Photo send failed (attempt {attempt + 1}): {e}")
-                if attempt < self.retry_attempts - 1:
-                    time.sleep(self.retry_delay)
-        
-        return {'status': 'error', 'message': 'All retry attempts failed'}
-
-# Initialize enterprise-grade bot
-telegram_bot = InstitutionalTelegramBot(BOT_TOKEN, CHANNEL_ID)
-if not telegram_bot.bot:
-    logger.critical("❌ SHUTDOWN: Telegram bot initialization failed")
-    sys.exit(1)
-
-# =============================================================================
-# INSTITUTIONAL IMAGE PROCESSOR WITH FXWAVE BRANDING
-# =============================================================================
-class InstitutionalImageProcessor:
-    def __init__(self):
-        self.logo_paths = {
-            'main': 'fxwave_logo.png',
-            'watermark': 'static/logos/watermark.png',
-            'fallback': 'static/logos/fxwave_logo.png'
-        }
-        self.create_directories()
-        self.ensure_logos()
-        logger.info("✅ Institutional Image Processor Initialized")
-    
-    def create_directories(self):
-        """Create required directory structure"""
-        directories = [
-            'static/processed/temp_images',
-            'static/logos'
-        ]
-        
-        for directory in directories:
-            os.makedirs(directory, exist_ok=True)
-            logger.info(f"✅ Directory ensured: {directory}")
-    
-    def ensure_logos(self):
-        """Ensure all logo variants exist"""
-        try:
-            # Create watermark from main logo
-            if os.path.exists(self.logo_paths['main']):
-                main_logo = Image.open(self.logo_paths['main'])
-                
-                # Create watermark version (25% size)
-                watermark_size = (main_logo.width // 4, main_logo.height // 4)
-                watermark_logo = main_logo.resize(watermark_size, Image.Resampling.LANCZOS)
-                watermark_logo.save(self.logo_paths['watermark'])
-                
-                # Create backup copy
-                main_logo.save(self.logo_paths['fallback'])
-                
-                logger.info("✅ All logo variants created")
-            else:
-                logger.warning("⚠️ Main logo not found - using fallback mode")
-                
-        except Exception as e:
-            logger.error(f"❌ Logo preparation failed: {e}")
-    
-    def create_professional_chart(self, image_bytes, signal_data):
-        """Create institutional-grade chart with FXWave branding"""
-        try:
-            # Open and validate image
-            original_image = Image.open(io.BytesIO(image_bytes))
-            
-            # Convert to RGB if necessary
-            if original_image.mode != 'RGB':
-                original_image = original_image.convert('RGB')
-            
-            # Create new image with header space
-            header_height = 100
-            new_width = max(original_image.width, 1280)
-            new_height = original_image.height + header_height
-            
-            # Create professional white background
-            professional_image = Image.new('RGB', (new_width, new_height), 'white')
-            
-            # Resize original image if needed
-            if original_image.width != new_width:
-                original_image = original_image.resize((new_width, original_image.height), Image.Resampling.LANCZOS)
-            
-            # Paste original image
-            professional_image.paste(original_image, (0, header_height))
-            
-            # Add institutional header
-            professional_image = self._add_institutional_header(professional_image, signal_data)
-            
-            # Add watermark
-            professional_image = self._add_watermark(professional_image)
-            
-            # Convert to optimized bytes
-            output_bytes = io.BytesIO()
-            professional_image.save(output_bytes, format='PNG', optimize=True, quality=95)
-            output_bytes.seek(0)
-            
-            logger.info("✅ Professional chart created with FXWave branding")
-            return output_bytes.getvalue()
-            
-        except Exception as e:
-            logger.error(f"❌ Professional chart creation failed: {e}")
-            return self._fallback_watermark(image_bytes)
-    
-    def _add_institutional_header(self, image, signal_data):
-        """Add professional institutional header"""
-        try:
-            draw = ImageDraw.Draw(image)
-            
-            # Try to load professional fonts
-            try:
-                title_font = ImageFont.truetype("arialbd.ttf", 28)
-                subtitle_font = ImageFont.truetype("arial.ttf", 18)
-            except:
-                # Fallback to default fonts
-                title_font = ImageFont.load_default()
-                subtitle_font = ImageFont.load_default()
-            
-            # Add FXWave logo to header
-            if os.path.exists(self.logo_paths['main']):
-                logo = Image.open(self.logo_paths['main'])
-                logo_size = (70, 70)
-                logo = logo.resize(logo_size, Image.Resampling.LANCZOS)
-                image.paste(logo, (20, 15), logo if logo.mode == 'RGBA' else None)
-            
-            # Header text
-            symbol = signal_data.get('symbol', 'UNKNOWN')
-            direction = signal_data.get('direction', 'SIGNAL')
-            entry = signal_data.get('entry', 0)
-            
-            # Title
-            title_text = f"FXWave Institutional • {symbol} {direction}"
-            draw.text((100, 25), title_text, fill='#2C3E50', font=title_font)
-            
-            # Subtitle with key metrics
-            digits = 5 if 'JPY' not in symbol else 3
-            subtitle_text = f"Entry: {entry:.{digits}f} | Risk Management: Institutional Grade"
-            draw.text((100, 60), subtitle_text, fill='#7F8C8D', font=subtitle_font)
-            
-            # Add decorative line
-            draw.line([(0, 95), (image.width, 95)], fill='#3498DB', width=2)
-            
-            return image
-            
-        except Exception as e:
-            logger.error(f"❌ Header creation failed: {e}")
-            return image
-    
-    def _add_watermark(self, image):
-        """Add subtle FXWave watermark"""
-        try:
-            if os.path.exists(self.logo_paths['watermark']):
-                watermark = Image.open(self.logo_paths['watermark'])
-                
-                # Position in bottom right
-                x = image.width - watermark.width - 20
-                y = image.height - watermark.height - 20
-                
-                # Create transparent layer for watermark
-                if image.mode != 'RGBA':
-                    image = image.convert('RGBA')
-                
-                transparent_layer = Image.new('RGBA', image.size, (0, 0, 0, 0))
-                transparent_layer.paste(watermark, (x, y))
-                
-                # Composite images
-                watermarked_image = Image.alpha_composite(image, transparent_layer)
-                return watermarked_image.convert('RGB')
-            
-            return image
-            
-        except Exception as e:
-            logger.error(f"❌ Watermark failed: {e}")
-            return image
-    
-    def _fallback_watermark(self, image_bytes):
-        """Fallback watermark application"""
-        try:
-            image = Image.open(io.BytesIO(image_bytes))
-            if os.path.exists(self.logo_paths['watermark']):
-                watermark = Image.open(self.logo_paths['watermark'])
-                x = image.width - watermark.width - 10
-                y = image.height - watermark.height - 10
-                image.paste(watermark, (x, y), watermark if watermark.mode == 'RGBA' else None)
-            
-            output_bytes = io.BytesIO()
-            image.save(output_bytes, format='PNG')
-            return output_bytes.getvalue()
-            
-        except Exception as e:
-            logger.error(f"❌ Fallback watermark failed: {e}")
-            return image_bytes
-
-# Initialize image processor
-image_processor = InstitutionalImageProcessor()
-
-# =============================================================================
-# ASSET CONFIGURATION - INSTITUTIONAL SPECIFICATIONS
-# =============================================================================
-ASSET_CONFIG = {
-    "EURUSD": {"digits": 5, "pip": 0.0001, "tick_value_adj": 1.0, "lot_size": 100000},
-    "GBPUSD": {"digits": 5, "pip": 0.0001, "tick_value_adj": 1.0, "lot_size": 100000},
-    "USDJPY": {"digits": 3, "pip": 0.01, "tick_value_adj": 1000, "lot_size": 100000},
-    "AUDUSD": {"digits": 5, "pip": 0.0001, "tick_value_adj": 1.0, "lot_size": 100000},
-    "USDCAD": {"digits": 5, "pip": 0.0001, "tick_value_adj": 1.0, "lot_size": 100000},
-    "CADJPY": {"digits": 3, "pip": 0.01, "tick_value_adj": 1000, "lot_size": 100000},
-    "XAUUSD": {"digits": 2, "pip": 0.1, "tick_value_adj": 100, "lot_size": 100},
-    "BTCUSD": {"digits": 1, "pip": 1, "tick_value_adj": 1, "lot_size": 1},
-    # ... (include all your symbols from original config)
+# Конфигурация из environment variables
+CONFIG = {
+    'SECRET_KEY': os.getenv('SECRET_KEY', '5f4d8b7e3a1c9b2e5f4d8b7e3a1c9b2e5f4d8b7e3a1c9b2e5f4d8b7e3a1c9b2e'),
+    'BOT_TOKEN': os.getenv('BOT_TOKEN', '8526027334:AAEyG3eDapTodPcDY7mCSeskgpBY1PkoV1o'),
+    'CHANNEL_ID': os.getenv('CHANNEL_ID', '-1001868323230'),
+    'LOG_LEVEL': os.getenv('LOG_LEVEL', 'INFO')
 }
 
-def get_asset_info(symbol):
-    """Get institutional-grade asset configuration"""
-    return ASSET_CONFIG.get(symbol, {"digits": 5, "pip": 0.0001, "tick_value_adj": 1.0, "lot_size": 100000})
+# Кэш для предотвращения дублирования сигналов
+signal_cache = defaultdict(list)
+CACHE_DURATION = timedelta(minutes=5)
 
-# =============================================================================
-# INSTITUTIONAL SIGNAL PROCESSING ENGINE
-# =============================================================================
-class InstitutionalSignalEngine:
-    @staticmethod
-    def parse_signal(caption):
-        """Institutional-grade signal parsing with comprehensive validation"""
+# Мониторинг здоровья
+health_stats = {
+    'start_time': datetime.now(),
+    'total_requests': 0,
+    'successful_signals': 0,
+    'failed_signals': 0,
+    'last_signal_time': None,
+    'active_threads': 0
+}
+
+def require_auth(f):
+    """Декоратор для аутентификации"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        auth_header = request.headers.get('Authorization')
+        
+        if not auth_header:
+            logger.warning("Unauthorized access attempt - no auth header")
+            return jsonify({'error': 'Authentication required'}), 401
+        
         try:
-            logger.info(f"🔍 Parsing institutional signal...")
-            
-            # Clean text but preserve critical information
-            text = re.sub(r'[^\w\s\.\:\$\(\)<>]', ' ', caption)
-            text = re.sub(r'\s+', ' ', text).strip().upper()
-
-            # Extract symbol with priority matching
-            symbol_match = None
-            for sym in ASSET_CONFIG:
-                if sym in text:
-                    symbol_match = sym
-                    break
-            
-            if not symbol_match:
-                logger.error("❌ No valid symbol found")
-                return None
-
-            # Enhanced direction detection
-            if "▲" in caption or "UP" in text or "LONG" in text:
-                direction = "LONG"
-                emoji = "▲"
-                dir_text = "Up"
-            elif "▼" in caption or "DOWN" in text or "SHORT" in text:
-                direction = "SHORT" 
-                emoji = "▼"
-                dir_text = "Down"
-            else:
-                logger.warning("⚠️ Direction not specified, defaulting to LONG")
-                direction = "LONG"
-                emoji = "●"
-                dir_text = "Neutral"
-
-            # Institutional-grade price extraction
-            def extract_institutional_price(pattern):
-                # HTML format first
-                html_pattern = pattern.replace('([0-9.]+)', '<code>([0-9.]+)</code>')
-                m = re.search(html_pattern, text)
-                if m:
-                    return float(m.group(1))
-                
-                # Plain text fallback
-                m = re.search(pattern, text)
-                return float(m.group(1)) if m else 0.0
-
-            # Extract critical price levels
-            entry = extract_institutional_price(r'ENTRY[:\s]+([0-9.]+)')
-            
-            # Order type classification
-            order_type = "LIMIT"
-            if "(LIMIT)" in caption.upper():
-                order_type = "LIMIT"
-            elif "(STOP)" in caption.upper():
-                order_type = "STOP"
-
-            # Multi-TP level extraction
-            tp_levels = []
-            for i in range(1, 4):
-                tp_pattern = r'TP' + str(i) + r'[:\s]*<code>([0-9.]+)</code>'
-                tp_match = re.search(tp_pattern, text)
-                if tp_match:
-                    tp_levels.append(float(tp_match.group(1)))
-            
-            # Fallback to single TP
-            if not tp_levels:
-                tp_match = re.search(r'TP[:\s]*<code>([0-9.]+)</code>', text)
-                if tp_match:
-                    tp_levels.append(float(tp_match.group(1)))
-            
-            # Enhanced SL extraction
-            sl = extract_institutional_price(r'SL[:\s]+([0-9.]+)') or \
-                 extract_institutional_price(r'STOP LOSS[:\s]+([0-9.]+)')
-            
-            # Current price with validation
-            current = extract_institutional_price(r'CURRENT[:\s]+([0-9.]+)') or entry
-            
-            # Real trading data extraction
-            volume_match = re.search(r'SIZE[:\s]*([0-9.]+)', text)
-            real_volume = float(volume_match.group(1)) if volume_match else 1.0
-            
-            risk_match = re.search(r'RISK[:\s]*\$([0-9.]+)', text)
-            real_risk = float(risk_match.group(1)) if risk_match else 0.0
-            
-            # Daily data for institutional analysis
-            daily_high = extract_institutional_price(r'DAILY_HIGH[:\s]+([0-9.]+)') or current * 1.005
-            daily_low = extract_institutional_price(r'DAILY_LOW[:\s]+([0-9.]+)') or current * 0.995
-            daily_close = extract_institutional_price(r'DAILY_CLOSE[:\s]+([0-9.]+)') or current
-
-            # Institutional validation
-            if entry == 0 or sl == 0 or not tp_levels:
-                logger.error(f"❌ Invalid price data - Entry:{entry}, SL:{sl}, TPs:{len(tp_levels)}")
-                return None
-
-            # Calculate institutional RR ratio
-            rr_ratio = round(abs(tp_levels[0] - entry) / abs(entry - sl), 2) if sl != 0 else 0
-
-            # Signal confidence scoring
-            confidence_score = InstitutionalSignalEngine.calculate_confidence(
-                entry, tp_levels, sl, real_volume, rr_ratio
-            )
-
-            logger.info(f"✅ INSTITUTIONAL SIGNAL PARSED: {direction} {symbol_match} | "
-                       f"Entry: {entry} | TPs: {len(tp_levels)} | Confidence: {confidence_score}%")
-
-            return {
-                'symbol': symbol_match,
-                'direction': direction,
-                'dir_text': dir_text,
-                'emoji': emoji,
-                'entry': entry,
-                'order_type': order_type,
-                'tp_levels': tp_levels,
-                'sl': sl,
-                'current_price': current,
-                'real_volume': real_volume,
-                'real_risk': real_risk,
-                'rr_ratio': rr_ratio,
-                'daily_high': daily_high,
-                'daily_low': daily_low,
-                'daily_close': daily_close,
-                'confidence_score': confidence_score,
-                'signal_grade': InstitutionalSignalEngine.get_signal_grade(confidence_score)
-            }
-
+            token = auth_header.replace('Bearer ', '').strip()
+            if token != CONFIG['SECRET_KEY']:
+                logger.warning(f"Invalid token attempt: {token[:10]}...")
+                return jsonify({'error': 'Invalid token'}), 401
         except Exception as e:
-            logger.error(f"❌ Institutional signal parsing failed: {e}")
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            return None
+            logger.error(f"Auth error: {str(e)}")
+            return jsonify({'error': 'Authentication failed'}), 401
+        
+        return f(*args, **kwargs)
+    return decorated_function
 
-    @staticmethod
-    def calculate_confidence(entry, tp_levels, sl, volume, rr_ratio):
-        """Calculate institutional confidence score"""
-        base_score = 60
-        
-        # RR ratio bonus
-        rr_bonus = min(20, (rr_ratio - 1) * 10)
-        
-        # Volume bonus (larger volumes = more confidence)
-        volume_bonus = min(10, volume * 2)
-        
-        # Multiple TP bonus
-        tp_bonus = len(tp_levels) * 5
-        
-        total_score = base_score + rr_bonus + volume_bonus + tp_bonus
-        return min(95, max(50, total_score))
+def is_duplicate_signal(symbol: str, entry: float, signal_type: str) -> bool:
+    """Проверка на дублирование сигнала"""
+    current_time = datetime.now()
+    cache_key = f"{symbol}_{signal_type}"
+    
+    # Очистка старых записей
+    signal_cache[cache_key] = [
+        (entry_val, timestamp) 
+        for entry_val, timestamp in signal_cache[cache_key]
+        if current_time - timestamp < CACHE_DURATION
+    ]
+    
+    # Проверка на дублирование
+    for cached_entry, _ in signal_cache[cache_key]:
+        if abs(cached_entry - entry) < 0.0001:  # Допуск для float
+            return True
+    
+    # Добавление в кэш
+    signal_cache[cache_key].append((entry, current_time))
+    return False
 
-    @staticmethod
-    def get_signal_grade(confidence):
-        """Convert confidence to institutional grade"""
-        if confidence >= 80:
-            return "A-GRADE"
-        elif confidence >= 70:
-            return "B-GRADE" 
-        elif confidence >= 60:
-            return "C-GRADE"
-        else:
-            return "REVIEW-GRADE"
-
-# =============================================================================
-# ENTERPRISE-GRADE WEBHOOK HANDLER
-# =============================================================================
-@app.route('/webhook', methods=['POST', 'GET'])
-def institutional_webhook():
-    """Enterprise-grade webhook handler for institutional signals"""
-    
-    logger.info("🏛️ INSTITUTIONAL WEBHOOK REQUEST RECEIVED")
-    
-    if request.method == 'GET':
-        return jsonify({
-            "status": "active", 
-            "service": "FXWave Institutional Signals",
-            "version": "4.0",
-            "timestamp": datetime.utcnow().isoformat() + 'Z',
-            "grade": "INSTITUTIONAL"
-        }), 200
-    
+def parse_signal_text(text: str) -> Dict[str, Any]:
+    """Парсинг текста сигнала из MQL5"""
     try:
-        start_time = time.time()
+        lines = text.strip().split('\n')
+        signal_data = {
+            'symbol': '',
+            'direction': '',
+            'entry': 0.0,
+            'tp_levels': [],
+            'sl': 0.0,
+            'volume': 0.0,
+            'risk_amount': 0.0,
+            'rr_ratio': 0.0,
+            'atr_value': 0.0,
+            'risk_level': '',
+            'daily_data': {},
+            'raw_text': text
+        }
         
-        # Process photo with signal
-        if 'photo' in request.files:
-            photo = request.files['photo']
-            caption = request.form.get('caption', '')
-            
-            # Parse institutional signal
-            parsed_data = InstitutionalSignalEngine.parse_signal(caption)
-            if not parsed_data:
-                return jsonify({
-                    "status": "error", 
-                    "message": "Invalid institutional signal format",
-                    "code": "SIGNAL_PARSE_ERROR"
-                }), 400
-            
-            # Process image with institutional branding
-            image_bytes = photo.read()
-            processed_image = image_processor.create_professional_chart(image_bytes, parsed_data)
-            
-            # Format institutional message
-            formatted_message = format_institutional_signal(parsed_data)
-            
-            # Send with retry logic
-            result = telegram_bot.send_photo_with_retry(processed_image, formatted_message)
-            
-            processing_time = round((time.time() - start_time) * 1000, 2)
-            
-            if result['status'] == 'success':
-                logger.info(f"✅ INSTITUTIONAL SIGNAL DELIVERED: {parsed_data['symbol']} "
-                           f"| Grade: {parsed_data['signal_grade']} | Time: {processing_time}ms")
+        current_section = None
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
                 
-                return jsonify({
-                    "status": "success",
-                    "message_id": result['message_id'],
-                    "symbol": parsed_data['symbol'],
-                    "order_type": parsed_data['order_type'],
-                    "tp_levels_count": len(parsed_data['tp_levels']),
-                    "real_volume": parsed_data['real_volume'],
-                    "real_risk": parsed_data['real_risk'],
-                    "signal_grade": parsed_data['signal_grade'],
-                    "confidence_score": parsed_data['confidence_score'],
-                    "processing_time_ms": processing_time,
-                    "mode": "institutional_photo",
-                    "timestamp": datetime.utcnow().isoformat() + 'Z'
-                }), 200
-            else:
-                logger.error(f"❌ INSTITUTIONAL SIGNAL DELIVERY FAILED: {result['message']}")
-                return jsonify({
-                    "status": "error", 
-                    "message": result['message'],
-                    "code": "TELEGRAM_DELIVERY_ERROR"
-                }), 500
+            # Определение секций
+            if line == 'EXECUTION':
+                current_section = 'execution'
+                continue
+            elif line == 'RISK MANAGEMENT':
+                current_section = 'risk'
+                continue
+            elif line == 'DAILY DATA':
+                current_section = 'daily'
+                continue
+            elif line == 'ANALYST COMMENT':
+                current_section = 'comment'
+                continue
+            
+            # Парсинг основных данных из первой строки
+            if '▲' in line or '▼' in line and not signal_data['symbol']:
+                parts = line.split(' ')
+                if len(parts) >= 4:
+                    signal_data['direction'] = 'BUY' if '▲' in line else 'SELL'
+                    signal_data['symbol'] = parts[2]
+            
+            # Парсинг execution секции
+            elif current_section == 'execution':
+                if line.startswith('Entry:'):
+                    try:
+                        entry_str = line.split(': ')[1].split(' ')[0]
+                        signal_data['entry'] = float(entry_str)
+                    except (IndexError, ValueError):
+                        pass
+                elif line.startswith('TP'):
+                    try:
+                        tp_str = line.split(': ')[1]
+                        signal_data['tp_levels'].append(float(tp_str))
+                    except (IndexError, ValueError):
+                        pass
+                elif line.startswith('SL:'):
+                    try:
+                        sl_str = line.split(': ')[1]
+                        signal_data['sl'] = float(sl_str)
+                    except (IndexError, ValueError):
+                        pass
+            
+            # Парсинг risk секции
+            elif current_section == 'risk':
+                if line.startswith('Size:'):
+                    try:
+                        vol_str = line.split(': ')[1].split(' ')[0]
+                        signal_data['volume'] = float(vol_str)
+                    except (IndexError, ValueError):
+                        pass
+                elif line.startswith('Risk: $'):
+                    try:
+                        risk_str = line.split('$')[1]
+                        signal_data['risk_amount'] = float(risk_str)
+                    except (IndexError, ValueError):
+                        pass
+                elif line.startswith('R:R:'):
+                    try:
+                        rr_str = line.split(': ')[1].replace(':1', '')
+                        signal_data['rr_ratio'] = float(rr_str)
+                    except (IndexError, ValueError):
+                        pass
+                elif line.startswith('ATR('):
+                    try:
+                        atr_str = line.split(': ')[1]
+                        signal_data['atr_value'] = float(atr_str)
+                    except (IndexError, ValueError):
+                        pass
+                elif line.startswith('Risk Level:'):
+                    try:
+                        signal_data['risk_level'] = line.split(': ')[1]
+                    except IndexError:
+                        pass
+            
+            # Парсинг daily данных
+            elif current_section == 'daily':
+                if line.startswith('High:'):
+                    try:
+                        high_str = line.split(': ')[1]
+                        signal_data['daily_data']['high'] = float(high_str)
+                    except (IndexError, ValueError):
+                        pass
+                elif line.startswith('Low:'):
+                    try:
+                        low_str = line.split(': ')[1]
+                        signal_data['daily_data']['low'] = float(low_str)
+                    except (IndexError, ValueError):
+                        pass
+                elif line.startswith('Close:'):
+                    try:
+                        close_str = line.split(': ')[1]
+                        signal_data['daily_data']['close'] = float(close_str)
+                    except (IndexError, ValueError):
+                        pass
         
-        # Text-only signal processing
-        caption = request.form.get('caption', '')
-        if caption:
-            parsed_data = InstitutionalSignalEngine.parse_signal(caption)
-            if not parsed_data:
-                return jsonify({
-                    "status": "error", 
-                    "message": "Invalid signal format",
-                    "code": "TEXT_SIGNAL_PARSE_ERROR"
-                }), 400
-            
-            formatted_message = format_institutional_signal(parsed_data)
-            result = telegram_bot.send_message_with_retry(formatted_message)
-            
-            processing_time = round((time.time() - start_time) * 1000, 2)
-            
-            if result['status'] == 'success':
-                logger.info(f"✅ TEXT SIGNAL DELIVERED: {parsed_data['symbol']} | Time: {processing_time}ms")
-                return jsonify({
-                    "status": "success",
-                    "message_id": result['message_id'],
-                    "symbol": parsed_data['symbol'],
-                    "signal_grade": parsed_data['signal_grade'],
-                    "processing_time_ms": processing_time,
-                    "mode": "institutional_text"
-                }), 200
-            else:
-                return jsonify({
-                    "status": "error", 
-                    "message": result['message'],
-                    "code": "TELEGRAM_TEXT_DELIVERY_ERROR"
-                }), 500
+        return signal_data
         
-        return jsonify({
-            "status": "error", 
-            "message": "No signal data provided",
-            "code": "NO_DATA_ERROR"
-        }), 400
+    except Exception as e:
+        logger.error(f"Error parsing signal text: {str(e)}")
+        return {'raw_text': text, 'error': str(e)}
+
+def format_telegram_message(signal_data: Dict[str, Any]) -> str:
+    """Форматирование сообщения для Telegram"""
+    try:
+        symbol = signal_data.get('symbol', 'UNKNOWN')
+        direction = signal_data.get('direction', 'UNKNOWN')
+        entry = signal_data.get('entry', 0)
+        sl = signal_data.get('sl', 0)
+        volume = signal_data.get('volume', 0)
+        risk_amount = signal_data.get('risk_amount', 0)
+        rr_ratio = signal_data.get('rr_ratio', 0)
+        atr_value = signal_data.get('atr_value', 0)
+        risk_level = signal_data.get('risk_level', 'UNKNOWN')
+        
+        # Эмодзи для направления
+        direction_emoji = "🟢" if direction == 'BUY' else "🔴"
+        risk_emoji = {
+            'LOW': '🟢',
+            'MEDIUM': '🟡', 
+            'HIGH': '🟠',
+            'EXTREME': '🔴'
+        }.get(risk_level, '⚪')
+        
+        message = f"""
+{direction_emoji} **FXWAVE INSTITUTIONAL SIGNAL** {direction_emoji}
+
+**🎯 Symbol:** `{symbol}`
+**📈 Direction:** {direction} {direction_emoji}
+**💰 Entry:** `{entry:.5f}`
+**🛡️ SL:** `{sl:.5f}`
+
+**📊 Risk Management:**
+• **Volume:** `{volume:.2f}` lots
+• **Risk Amount:** `${risk_amount:.0f}`
+• **R:R Ratio:** `{rr_ratio:.2f}:1`
+• **ATR Value:** `{atr_value:.5f}`
+• **Risk Level:** {risk_emoji} {risk_level}
+
+"""
+
+        # Добавляем TP уровни
+        tp_levels = signal_data.get('tp_levels', [])
+        if tp_levels:
+            message += "\n**🎯 Take Profit Levels:**\n"
+            for i, tp in enumerate(tp_levels, 1):
+                if tp > 0:
+                    message += f"• TP{i}: `{tp:.5f}`\n"
+        
+        # Добавляем daily данные
+        daily_data = signal_data.get('daily_data', {})
+        if daily_data:
+            message += f"""
+**📅 Daily Pivot Data:**
+• High: `{daily_data.get('high', 0):.5f}`
+• Low: `{daily_data.get('low', 0):.5f}`  
+• Close: `{daily_data.get('close', 0):.5f}`
+"""
+        
+        message += f"\n_🕒 Signal Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_"
+        message += f"\n_⚡ FXWave Pro v4.0 - Institutional Grade_"
+        
+        return message
+        
+    except Exception as e:
+        logger.error(f"Error formatting Telegram message: {str(e)}")
+        return f"📊 **FXWave Signal**\n\n{signal_data.get('raw_text', 'Raw signal data')}"
+
+def send_telegram_message(text: str, photo_data: Optional[bytes] = None) -> bool:
+    """Отправка сообщения в Telegram"""
+    try:
+        url = f"https://api.telegram.org/bot{CONFIG['BOT_TOKEN']}/sendMessage"
+        
+        if photo_data:
+            url = f"https://api.telegram.org/bot{CONFIG['BOT_TOKEN']}/sendPhoto"
+            files = {'photo': ('signal.png', photo_data, 'image/png')}
+            data = {
+                'chat_id': CONFIG['CHANNEL_ID'],
+                'caption': text,
+                'parse_mode': 'Markdown'
+            }
+            response = requests.post(url, files=files, data=data, timeout=30)
+        else:
+            data = {
+                'chat_id': CONFIG['CHANNEL_ID'],
+                'text': text,
+                'parse_mode': 'Markdown'
+            }
+            response = requests.post(url, json=data, timeout=30)
+        
+        if response.status_code == 200:
+            logger.info("Telegram message sent successfully")
+            return True
+        else:
+            logger.error(f"Telegram API error: {response.status_code} - {response.text}")
+            return False
             
     except Exception as e:
-        logger.error(f"❌ INSTITUTIONAL WEBHOOK ERROR: {e}", exc_info=True)
-        return jsonify({
-            "status": "error", 
-            "message": f"Institutional system error: {str(e)}",
-            "code": "SYSTEM_ERROR"
-        }), 500
+        logger.error(f"Error sending Telegram message: {str(e)}")
+        return False
 
-# =============================================================================
-# INSTITUTIONAL HEALTH MONITORING
-# =============================================================================
-@app.route('/health', methods=['GET'])
-def institutional_health():
-    """Comprehensive institutional health check"""
-    health_checks = {
-        "telegram_bot": "degraded",
-        "image_processor": "healthy",
-        "fmp_api": "operational",
-        "signal_parsing": "healthy",
-        "asset_config": f"{len(ASSET_CONFIG)} symbols"
-    }
+def process_signal_async(caption: str, photo_data: Optional[bytes] = None):
+    """Асинхронная обработка сигнала"""
+    try:
+        health_stats['active_threads'] += 1
+        
+        # Парсинг сигнала
+        signal_data = parse_signal_text(caption)
+        
+        # Проверка на дублирование
+        if is_duplicate_signal(
+            signal_data.get('symbol', 'UNKNOWN'), 
+            signal_data.get('entry', 0),
+            signal_data.get('direction', 'UNKNOWN')
+        ):
+            logger.warning(f"Duplicate signal detected: {signal_data.get('symbol')}")
+            return
+        
+        # Форматирование сообщения
+        telegram_message = format_telegram_message(signal_data)
+        
+        # Отправка в Telegram
+        if send_telegram_message(telegram_message, photo_data):
+            health_stats['successful_signals'] += 1
+            health_stats['last_signal_time'] = datetime.now()
+            logger.info(f"Signal processed successfully: {signal_data.get('symbol')}")
+        else:
+            health_stats['failed_signals'] += 1
+            logger.error(f"Failed to send signal: {signal_data.get('symbol')}")
+            
+    except Exception as e:
+        health_stats['failed_signals'] += 1
+        logger.error(f"Error processing signal: {str(e)}")
+    finally:
+        health_stats['active_threads'] -= 1
+
+@app.route('/webhook', methods=['POST'])
+@require_auth
+def webhook():
+    """Основной вебхук для приема сигналов от MQL5"""
+    health_stats['total_requests'] += 1
     
     try:
-        # Test Telegram connectivity
-        test_result = telegram_bot.send_message_with_retry(
-            "🏛️ FXWave Institutional Health Check - Systems Operational"
-        )
-        health_checks["telegram_bot"] = "healthy" if test_result['status'] == 'success' else "degraded"
+        # Получение данных из формы
+        caption = request.form.get('caption', '').strip()
+        photo_file = request.files.get('photo')
         
-        health_status = {
-            "status": "healthy" if all(v == "healthy" for k,v in health_checks.items() if k != "telegram_bot") else "degraded",
-            "service": "FXWave Institutional Signals v4.0",
-            "timestamp": datetime.utcnow().isoformat() + 'Z',
-            "checks": health_checks,
-            "performance": {
-                "image_processing": "ACTIVE",
-                "branding_engine": "ACTIVE", 
-                "retry_mechanism": "ACTIVE",
-                "confidence_scoring": "ACTIVE"
+        if not caption:
+            logger.warning("Empty caption received")
+            return jsonify({'error': 'Caption is required'}), 400
+        
+        logger.info(f"Received signal: {caption[:100]}...")
+        
+        # Асинхронная обработка
+        photo_data = photo_file.read() if photo_file else None
+        thread = threading.Thread(
+            target=process_signal_async,
+            args=(caption, photo_data)
+        )
+        thread.daemon = True
+        thread.start()
+        
+        return jsonify({
+            'status': 'success', 
+            'message': 'Signal is being processed'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Webhook error: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Эндпоинт для проверки здоровья сервиса"""
+    try:
+        current_time = datetime.now()
+        uptime = current_time - health_stats['start_time']
+        
+        health_data = {
+            'status': 'healthy',
+            'uptime_seconds': int(uptime.total_seconds()),
+            'total_requests': health_stats['total_requests'],
+            'successful_signals': health_stats['successful_signals'],
+            'failed_signals': health_stats['failed_signals'],
+            'active_threads': health_stats['active_threads'],
+            'last_signal_time': health_stats['last_signal_time'].isoformat() if health_stats['last_signal_time'] else None,
+            'cache_size': sum(len(v) for v in signal_cache.values()),
+            'timestamp': current_time.isoformat()
+        }
+        
+        return jsonify(health_data), 200
+        
+    except Exception as e:
+        logger.error(f"Health check error: {str(e)}")
+        return jsonify({'status': 'error', 'error': str(e)}), 500
+
+@app.route('/stats', methods=['GET'])
+@require_auth
+def get_stats():
+    """Расширенная статистика (требует аутентификации)"""
+    try:
+        stats = {
+            'health': health_stats.copy(),
+            'cache_info': {
+                'total_cached_signals': sum(len(v) for v in signal_cache.values()),
+                'cache_duration_minutes': CACHE_DURATION.total_seconds() / 60,
+                'cached_symbols': list(signal_cache.keys())
+            },
+            'config': {
+                'channel_id': CONFIG['CHANNEL_ID'],
+                'bot_token_masked': CONFIG['BOT_TOKEN'][:10] + '...' if CONFIG['BOT_TOKEN'] else None,
+                'secret_key_masked': CONFIG['SECRET_KEY'][:10] + '...' if CONFIG['SECRET_KEY'] else None
             }
         }
         
-        return jsonify(health_status), 200
+        # Преобразование datetime для JSON
+        stats['health']['start_time'] = stats['health']['start_time'].isoformat()
+        if stats['health']['last_signal_time']:
+            stats['health']['last_signal_time'] = stats['health']['last_signal_time'].isoformat()
+        
+        return jsonify(stats), 200
         
     except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return jsonify({
-            "status": "unhealthy",
-            "error": str(e),
-            "timestamp": datetime.utcnow().isoformat() + 'Z'
-        }), 503
+        logger.error(f"Stats error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
-# =============================================================================
-# SYSTEM INITIALIZATION
-# =============================================================================
+@app.route('/cache/clear', methods=['POST'])
+@require_auth
+def clear_cache():
+    """Очистка кэша (требует аутентификации)"""
+    try:
+        signal_cache.clear()
+        logger.info("Signal cache cleared manually")
+        return jsonify({'status': 'success', 'message': 'Cache cleared'}), 200
+    except Exception as e:
+        logger.error(f"Cache clear error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({'error': 'Endpoint not found'}), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    logger.error(f"Internal server error: {str(error)}")
+    return jsonify({'error': 'Internal server error'}), 500
+
 if __name__ == '__main__':
-    logger.info("🚀 INITIALIZING FXWAVE INSTITUTIONAL SIGNALS v4.0")
-    logger.info("✅ Institutional Image Processor: ACTIVATED")
-    logger.info("✅ Enterprise Telegram Bot: ACTIVATED") 
-    logger.info("✅ Institutional Signal Engine: ACTIVATED")
-    logger.info("✅ Confidence Scoring: ENABLED")
-    logger.info("✅ Multi-TP Support: ENABLED")
-    logger.info(f"✅ Asset Coverage: {len(ASSET_CONFIG)} symbols")
+    logger.info("Starting FXWave Signals Flask App...")
+    logger.info(f"Configuration loaded: Channel ID: {CONFIG['CHANNEL_ID']}")
     
-    port = int(os.environ.get('PORT', 10000))
+    # Проверка обязательных конфигураций
+    required_configs = ['SECRET_KEY', 'BOT_TOKEN', 'CHANNEL_ID']
+    missing_configs = [cfg for cfg in required_configs if not CONFIG.get(cfg)]
+    
+    if missing_configs:
+        logger.error(f"Missing required configurations: {missing_configs}")
+        exit(1)
+    
+    # Запуск Flask приложения
     app.run(
         host='0.0.0.0',
-        port=port,
-        debug=False
+        port=5000,
+        debug=CONFIG.get('FLASK_ENV') != 'production',
+        threaded=True
     )
