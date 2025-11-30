@@ -1,4 +1,4 @@
-pyTelegramBotAPI==4.15.2
+pyTelegramBotAPI==4.14.0
 Flask==2.3.3
 requests==2.31.0
 gunicorn==21.2.0
@@ -9,4 +9,5 @@ blinker==1.6.3
 click==8.1.7
 scikit-learn==1.5.1
 joblib==1.4.2
-pandas==2.1.0
+pandas==2.0.3
+numpy==1.24.3
