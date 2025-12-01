@@ -374,29 +374,34 @@ class FBSProfitCalculator:
             specs = FBSSymbolSpecs.get_specs(symbol)
             method = specs['calculation_method']
             
-            # Calculate price difference
-            if trade_direction.upper() == 'BUY':
-                price_diff = exit_price - entry_price
-            else:
-                price_diff = entry_price - exit_price
+            # Calculate price difference based on trade direction
+            # ALWAYS: exit_price - entry_price for profit calculation
+            # The sign will determine if it's profit or loss
+            price_diff = exit_price - entry_price
             
             # Use appropriate calculation method
             if method == 'forex_standard':
-                return cls._calculate_forex_standard(specs, price_diff, volume_lots)
+                profit = cls._calculate_forex_standard(specs, price_diff, volume_lots)
             elif method == 'forex_jpy':
-                return cls._calculate_forex_jpy(specs, price_diff, volume_lots, entry_price)
+                profit = cls._calculate_forex_jpy(specs, price_diff, volume_lots, entry_price)
             elif method == 'forex_cross':
-                return cls._calculate_forex_cross(specs, symbol, price_diff, volume_lots)
+                profit = cls._calculate_forex_cross(specs, symbol, price_diff, volume_lots)
             elif method == 'forex_jpy_cross':
-                return cls._calculate_forex_jpy_cross(specs, symbol, price_diff, volume_lots, entry_price)
+                profit = cls._calculate_forex_jpy_cross(specs, symbol, price_diff, volume_lots, entry_price)
             elif method == 'metal_standard':
-                return cls._calculate_metal_standard(specs, price_diff, volume_lots)
+                profit = cls._calculate_metal_standard(specs, price_diff, volume_lots)
             elif method == 'metal_silver':
-                return cls._calculate_metal_silver(specs, price_diff, volume_lots)
+                profit = cls._calculate_metal_silver(specs, price_diff, volume_lots)
             elif method == 'crypto_standard':
-                return cls._calculate_crypto_standard(specs, price_diff, volume_lots)
+                profit = cls._calculate_crypto_standard(specs, price_diff, volume_lots)
             else:
-                return cls._calculate_fallback(specs, price_diff, volume_lots)
+                profit = cls._calculate_fallback(specs, price_diff, volume_lots)
+            
+            # Adjust for trade direction
+            # For BUY: profit when exit_price > entry_price
+            # For SELL: profit when exit_price < entry_price
+            # The FBS calculator already handles this with price_diff
+            return profit
                 
         except Exception as e:
             logger.error(f"❌ Exact profit calculation failed for {symbol}: {e}")
@@ -410,18 +415,29 @@ class FBSProfitCalculator:
         """
         try:
             # For risk, we calculate the loss from entry to stop loss
+            # Always positive value for risk amount
             if trade_direction.upper() == 'BUY':
-                risk_price_diff = entry_price - sl_price  # Negative for loss
+                # For BUY: risk = entry_price - sl_price (if sl < entry)
+                risk_diff = abs(entry_price - sl_price)
             else:
-                risk_price_diff = sl_price - entry_price  # Negative for loss
+                # For SELL: risk = sl_price - entry_price (if sl > entry)
+                risk_diff = abs(sl_price - entry_price)
             
-            # Use absolute value for risk calculation
-            risk = abs(cls.calculate_exact_profit(
-                symbol, entry_price, sl_price, volume_lots, trade_direction
-            ))
+            # Calculate the risk amount as positive value
+            risk = cls.calculate_exact_profit(
+                symbol, 
+                entry_price, 
+                entry_price - risk_diff if trade_direction.upper() == 'BUY' else entry_price + risk_diff,
+                volume_lots, 
+                trade_direction
+            )
+            
+            # Risk should always be positive
+            risk = abs(risk)
             
             logger.info(f"📊 EXACT RISK CALCULATION | {symbol} | "
                        f"Entry: {entry_price} | SL: {sl_price} | "
+                       f"Direction: {trade_direction} | "
                        f"Volume: {volume_lots} | Risk: ${risk:.2f}")
             
             return risk
@@ -433,9 +449,6 @@ class FBSProfitCalculator:
     @classmethod
     def _calculate_forex_standard(cls, specs, price_diff, volume_lots):
         """Standard Forex pairs where USD is quote currency"""
-        # points = price_diff / point (where point = tick_size)
-        # value_per_point = tick_value / (tick_size / point) = tick_value
-        # profit = points * value_per_point * volume
         points = price_diff / specs['tick_size']
         profit = points * specs['tick_value_usd'] * volume_lots
         return profit
@@ -443,11 +456,9 @@ class FBSProfitCalculator:
     @classmethod
     def _calculate_forex_jpy(cls, specs, price_diff, volume_lots, entry_price):
         """JPY pairs calculation"""
-        # For JPY pairs, tick_value depends on current exchange rate
         current_rate = cls._get_current_usdjpy_rate()
         points = price_diff / specs['tick_size']
         
-        # Adjust tick value based on current USDJPY rate
         adjusted_tick_value = (specs['tick_size'] / current_rate) * specs['contract_size'] if current_rate > 0 else specs['tick_value_usd']
         profit = points * adjusted_tick_value * volume_lots
         return profit
@@ -457,7 +468,6 @@ class FBSProfitCalculator:
         """Forex cross pairs calculation"""
         points = price_diff / specs['tick_size']
         
-        # Get current USD rate for the quote currency
         quote_currency = symbol[3:6]
         usd_rate = cls._get_usd_exchange_rate(quote_currency)
         
@@ -474,7 +484,6 @@ class FBSProfitCalculator:
         """JPY cross pairs calculation"""
         points = price_diff / specs['tick_size']
         
-        # For JPY crosses, we need USDJPY rate and the cross rate
         usdjpy_rate = cls._get_current_usdjpy_rate()
         base_currency = symbol[:3]
         
@@ -520,16 +529,17 @@ class FBSProfitCalculator:
         """Fast fallback calculation"""
         specs = FBSSymbolSpecs.get_specs(symbol)
         pip_value = specs['pip']
-        pips = abs(exit_price - entry_price) / pip_value
+        pips = (exit_price - entry_price) / pip_value
         
         # Base profit calculation
-        base_profit = pips * volume_lots * 10  # $10 per pip per lot
+        profit = pips * volume_lots * 10  # $10 per pip per lot
         
-        # Adjust for trade direction
-        if trade_direction.upper() == 'BUY':
-            return base_profit if exit_price > entry_price else -base_profit
-        else:
-            return base_profit if exit_price < entry_price else -base_profit
+        logger.info(f"🔧 Fallback profit calculation | {symbol} | "
+                   f"Entry: {entry_price} | Exit: {exit_price} | "
+                   f"Direction: {trade_direction} | "
+                   f"Pips: {pips:.1f} | Profit: ${profit:.2f}")
+        
+        return profit
     
     @classmethod
     def _calculate_fallback_risk(cls, symbol, entry_price, sl_price, volume_lots):
@@ -544,7 +554,6 @@ class FBSProfitCalculator:
     def _get_current_usdjpy_rate(cls):
         """Get current USDJPY rate from FMP API"""
         try:
-            # Check cache first
             if 'USDJPY' in cls._exchange_rates and time.time() - cls._rates_last_updated < cls._rates_cache_duration:
                 return cls._exchange_rates['USDJPY']
             
@@ -561,7 +570,7 @@ class FBSProfitCalculator:
         except Exception as e:
             logger.warning(f"⚠️ Failed to get USDJPY rate: {e}")
         
-        return 110.0  # Fallback rate
+        return 110.0
     
     @classmethod
     def _get_usd_exchange_rate(cls, currency):
@@ -573,7 +582,6 @@ class FBSProfitCalculator:
             if currency in cls._exchange_rates and time.time() - cls._rates_last_updated < cls._rates_cache_duration:
                 return cls._exchange_rates[currency]
             
-            # Try to get rate from FMP
             symbol = f"USD{currency}" if currency != 'JPY' else f"{currency}USD"
             url = f"https://financialmodelingprep.com/api/v3/quote/{symbol}?apikey={FMP_API_KEY}"
             response = requests.get(url, timeout=5)
@@ -588,7 +596,6 @@ class FBSProfitCalculator:
         except Exception as e:
             logger.warning(f"⚠️ Failed to get USD/{currency} rate: {e}")
         
-        # Fallback rates
         fallback_rates = {
             'EUR': 0.85, 'GBP': 0.73, 'AUD': 1.35, 'NZD': 1.50,
             'CAD': 1.25, 'CHF': 0.88, 'CNH': 6.45, 'SGD': 1.32,
@@ -658,7 +665,7 @@ SESSION_FLAGS = {
 }
 
 # =============================================================================
-# ЭМОДЗИ ФУНКЦИИ ДЛЯ ВОЛАТИЛЬНОСТИ И УВЕРЕННОСТИ (Исправление №3)
+# ЭМОДЗИ ФУНКЦИИ ДЛЯ ВОЛАТИЛЬНОСТИ И УВЕРЕННОСТИ
 # =============================================================================
 
 def get_confidence_emoji(probability):
@@ -697,21 +704,20 @@ def get_asset_info(symbol):
     """Get comprehensive asset configuration with fallback"""
     asset = ASSET_CONFIG.get(symbol, {"digits": 5, "pip": 0.0001, "tick_value_adj": 1.0, "asset_class": "Forex"})
     
-    # Enhanced validation
     if symbol not in ASSET_CONFIG:
         logger.warning(f"⚠️ Unknown symbol {symbol}, using Forex defaults")
     
     return asset
 
 # =============================================================================
-# ADVANCED SIGNAL PARSING WITH MULTI-TP SUPPORT
+# ADVANCED SIGNAL PARSING - ОДИН TP НА ГРУППУ (ИСПРАВЛЕНО!)
 # =============================================================================
 class InstitutionalSignalParser:
     """Advanced parser for MQL5 institutional signal format"""
     
     @staticmethod
     def parse_signal(caption):
-        """Comprehensive signal parsing with HTML support and multi-TP detection"""
+        """Comprehensive signal parsing with HTML support - ТОЛЬКО ОДИН TP!"""
         try:
             logger.info(f"🔍 Parsing institutional signal: {caption[:200]}...")
             
@@ -726,13 +732,19 @@ class InstitutionalSignalParser:
                 return None
             
             # Extract direction with emoji support
-            direction_data = InstitutionalSignalParser.extract_direction(caption, clean_text)
+            direction_data = InstitutionalSignalParser.extract_direction(caption, clean_text, symbol)
             
-            # Extract prices with HTML tag priority
+            # Extract prices with HTML tag priority - ТОЛЬКО ПЕРВЫЙ TP!
             price_data = InstitutionalSignalParser.extract_prices(caption, clean_text, symbol)
             if not price_data:
                 logger.error("❌ Failed to extract essential price data")
                 return None
+            
+            # Валидация: проверяем, что TP правильный относительно направления
+            if not InstitutionalSignalParser.validate_tp_direction(price_data, direction_data):
+                logger.warning(f"⚠️ TP direction validation failed for {symbol}")
+                # Можно скорректировать направление на основе цен
+                direction_data = InstitutionalSignalParser.adjust_direction_by_prices(price_data, direction_data)
             
             # Extract trading metrics
             metrics = InstitutionalSignalParser.extract_metrics(clean_text)
@@ -741,12 +753,13 @@ class InstitutionalSignalParser:
             daily_data = InstitutionalSignalParser.extract_daily_data(caption, clean_text, price_data['entry'])
             
             # Calculate EXACT profit potential using FBS calculator
+            # Используем правильное направление
             profit_potential = FBSProfitCalculator.calculate_exact_profit(
                 symbol, 
                 price_data['entry'], 
                 price_data['tp_levels'][0] if price_data['tp_levels'] else price_data['entry'],
                 metrics['volume'],
-                'BUY' if direction_data['direction'] == 'LONG' else 'SELL'
+                direction_data['trade_direction']
             )
             
             # Calculate EXACT risk using FBS calculator
@@ -755,7 +768,15 @@ class InstitutionalSignalParser:
                 price_data['entry'],
                 price_data['sl'],
                 metrics['volume'], 
-                'BUY' if direction_data['direction'] == 'LONG' else 'SELL'
+                direction_data['trade_direction']
+            )
+            
+            # Calculate R:R ratio с правильным направлением
+            rr_ratio = InstitutionalSignalParser.calculate_rr_ratio(
+                price_data['entry'], 
+                price_data['tp_levels'], 
+                price_data['sl'],
+                direction_data['trade_direction']
             )
             
             # Validate critical data
@@ -767,17 +788,15 @@ class InstitutionalSignalParser:
                 return None
             
             # Расчет вероятности для эмодзи уверенности
-            rr_ratio = InstitutionalSignalParser.calculate_rr_ratio(
-                price_data['entry'], price_data['tp_levels'], price_data['sl']
-            )
             probability = 50 + (rr_ratio - 1) * 10 if rr_ratio > 0 else 50
-            probability = max(5, min(95, probability))  # Ограничение 5-95%
+            probability = max(5, min(95, probability))
             
             parsed_data = {
                 'symbol': symbol,
                 'direction': direction_data['direction'],
                 'dir_text': direction_data['dir_text'],
                 'emoji': direction_data['emoji'],
+                'trade_direction': direction_data['trade_direction'],
                 'entry': price_data['entry'],
                 'order_type': price_data['order_type'],
                 'tp_levels': price_data['tp_levels'],
@@ -785,7 +804,7 @@ class InstitutionalSignalParser:
                 'current_price': price_data.get('current', price_data['entry']),
                 'real_volume': metrics['volume'],
                 'real_risk': real_risk,
-                'profit_potential': profit_potential,
+                'profit_potential': abs(profit_potential),  # Всегда положительное значение
                 'rr_ratio': rr_ratio,
                 'probability': probability,
                 'daily_high': daily_data['high'],
@@ -794,8 +813,10 @@ class InstitutionalSignalParser:
             }
             
             logger.info(f"✅ Successfully parsed {symbol} | Direction: {direction_data['direction']} | "
+                       f"Trade Dir: {direction_data['trade_direction']} | "
                        f"TP Levels: {len(price_data['tp_levels'])} | Order Type: {price_data['order_type']} | "
-                       f"Exact Profit Potential: ${profit_potential:.2f} | Exact Risk: ${real_risk:.2f}")
+                       f"Exact Profit Potential: ${abs(profit_potential):.2f} | Exact Risk: ${real_risk:.2f} | "
+                       f"R:R: {rr_ratio:.2f}")
             
             return parsed_data
             
@@ -840,51 +861,65 @@ class InstitutionalSignalParser:
         return None
     
     @staticmethod
-    def extract_direction(original_caption, clean_text):
-        """Extract direction with emoji support"""
+    def extract_direction(original_caption, clean_text, symbol):
+        """Extract direction with emoji support - УЛУЧШЕННАЯ ЛОГИКА"""
         direction_data = {
             'direction': 'LONG',
             'dir_text': 'Up',
-            'emoji': '▲'
+            'emoji': '▲',
+            'trade_direction': 'BUY'
         }
         
-        # Check for direction indicators
+        # Первичное определение по эмодзи и тексту
         if '▲' in original_caption or 'UP' in clean_text or 'BUY' in clean_text:
             direction_data.update({
                 'direction': 'LONG',
                 'dir_text': 'Up', 
-                'emoji': '▲'
+                'emoji': '▲',
+                'trade_direction': 'BUY'
             })
         elif '▼' in original_caption or 'DOWN' in clean_text or 'SELL' in clean_text:
             direction_data.update({
                 'direction': 'SHORT',
                 'dir_text': 'Down',
-                'emoji': '▼'
+                'emoji': '▼',
+                'trade_direction': 'SELL'
             })
+        
+        logger.info(f"📊 Initial direction detection: {direction_data['trade_direction']} for {symbol}")
         
         return direction_data
     
     @staticmethod
     def extract_prices(original_caption, clean_text, symbol):
-        """Extract prices with HTML tag priority"""
+        """Extract prices with HTML tag priority - ТОЛЬКО ПЕРВЫЙ TP!"""
         try:
             digits = get_asset_info(symbol)["digits"]
             price_pattern = r'<code>(\d+\.\d+)</code>'
             matches = re.findall(price_pattern, original_caption)
             
+            logger.info(f"🔍 Found {len(matches)} price matches for {symbol}")
+            
             if len(matches) >= 3:  # At least entry, SL, and one TP
                 entry = float(matches[0])
                 sl = float(matches[1])
                 
-                # Extract TP levels (all remaining prices after entry and SL)
-                tp_levels = [float(price) for price in matches[2:]]
+                # ИСПРАВЛЕНИЕ: Берем ТОЛЬКО ПЕРВЫЙ TP согласно группировке MQL5
+                tp_levels = [float(matches[2])]  # Только первый TP!
                 
-                # Get current price (try to find after "Current")
+                # Логируем для отладки
+                if len(matches) > 3:
+                    logger.warning(f"⚠️ Found {len(matches)-2} TP levels for {symbol}, using only the first: {tp_levels[0]}")
+                    logger.info(f"📊 All TPs found: {matches[2:]}")
+                
+                # Get current price
                 current_match = re.search(r'Current.*?<code>(\d+\.\d+)</code>', original_caption)
                 current_price = float(current_match.group(1)) if current_match else entry
                 
-                # Determine order type based on direction and prices
+                # Determine order type
                 order_type = "LIMIT" if "LIMIT" in clean_text else "STOP"
+                
+                logger.info(f"✅ Extracted prices for {symbol}: Entry={entry}, SL={sl}, TP={tp_levels[0]}")
                 
                 return {
                     'entry': entry,
@@ -898,14 +933,13 @@ class InstitutionalSignalParser:
             return InstitutionalSignalParser._extract_prices_fallback(clean_text, symbol)
             
         except Exception as e:
-            logger.error(f"❌ Price extraction failed: {e}")
+            logger.error(f"❌ Price extraction failed for {symbol}: {e}")
             return None
     
     @staticmethod
     def _extract_prices_fallback(clean_text, symbol):
         """Fallback price extraction"""
         try:
-            # Simple pattern matching for prices
             price_pattern = r'(\d+\.\d+)'
             matches = re.findall(price_pattern, clean_text)
             
@@ -913,6 +947,8 @@ class InstitutionalSignalParser:
                 entry = float(matches[0])
                 sl = float(matches[1])
                 tp_levels = [float(matches[2])]
+                
+                logger.info(f"✅ Fallback extracted prices for {symbol}: Entry={entry}, SL={sl}, TP={tp_levels[0]}")
                 
                 return {
                     'entry': entry,
@@ -927,31 +963,76 @@ class InstitutionalSignalParser:
         return None
     
     @staticmethod
+    def validate_tp_direction(price_data, direction_data):
+        """Validate that TP is in the right direction"""
+        if not price_data['tp_levels']:
+            return True
+        
+        entry = price_data['entry']
+        tp = price_data['tp_levels'][0]
+        trade_direction = direction_data['trade_direction']
+        
+        # Для BUY: TP должен быть выше Entry
+        if trade_direction == 'BUY' and tp <= entry:
+            logger.warning(f"⚠️ BUY order has TP ({tp}) <= Entry ({entry})")
+            return False
+        
+        # Для SELL: TP должен быть ниже Entry
+        if trade_direction == 'SELL' and tp >= entry:
+            logger.warning(f"⚠️ SELL order has TP ({tp}) >= Entry ({entry})")
+            return False
+        
+        return True
+    
+    @staticmethod
+    def adjust_direction_by_prices(price_data, direction_data):
+        """Adjust direction based on entry and TP prices"""
+        if not price_data['tp_levels']:
+            return direction_data
+        
+        entry = price_data['entry']
+        tp = price_data['tp_levels'][0]
+        
+        # Определяем направление по ценам
+        if tp > entry:
+            # TP выше Entry = BUY
+            logger.info(f"🔁 Adjusting direction to BUY (TP={tp} > Entry={entry})")
+            direction_data.update({
+                'direction': 'LONG',
+                'dir_text': 'Up',
+                'emoji': '▲',
+                'trade_direction': 'BUY'
+            })
+        else:
+            # TP ниже Entry = SELL
+            logger.info(f"🔁 Adjusting direction to SELL (TP={tp} < Entry={entry})")
+            direction_data.update({
+                'direction': 'SHORT',
+                'dir_text': 'Down',
+                'emoji': '▼',
+                'trade_direction': 'SELL'
+            })
+        
+        return direction_data
+    
+    @staticmethod
     def extract_metrics(clean_text):
         """Extract trading metrics"""
-        volume = 1.08  # Default теперь 1.08 (DisplayVolume)
-        risk = 100.0  # Default
+        volume = 1.08  # Default DisplayVolume
         
         # Extract volume
         volume_match = re.search(r'(\d+\.\d+)\s*lots', clean_text)
         if volume_match:
             volume = float(volume_match.group(1))
         
-        # Extract risk
-        risk_match = re.search(r'\$(\d+)', clean_text)
-        if risk_match:
-            risk = float(risk_match.group(1))
+        logger.info(f"📊 Volume extracted: {volume} lots")
         
-        return {
-            'volume': volume,
-            'risk': risk
-        }
+        return {'volume': volume}
     
     @staticmethod
     def extract_daily_data(original_caption, clean_text, entry_price):
         """Extract daily data for pivot calculation"""
-        # In a real implementation, this would fetch actual daily data
-        # For now, use reasonable defaults based on entry price
+        # Use reasonable defaults based on entry price
         return {
             'high': entry_price * 1.005,
             'low': entry_price * 0.995,
@@ -959,15 +1040,35 @@ class InstitutionalSignalParser:
         }
     
     @staticmethod
-    def calculate_rr_ratio(entry, tp_levels, sl):
-        """Calculate risk-reward ratio"""
-        if not tp_levels or sl == 0:
+    def calculate_rr_ratio(entry, tp_levels, sl, trade_direction):
+        """Calculate CORRECT risk-reward ratio"""
+        if not tp_levels or sl == 0 or entry == 0:
             return 0.0
         
+        # Risk всегда положительный
         risk = abs(entry - sl)
-        reward = abs(tp_levels[0] - entry)
         
-        return round(reward / risk, 2) if risk > 0 else 0.0
+        # Reward зависит от направления
+        tp = tp_levels[0]
+        
+        if trade_direction == 'BUY':
+            # Для BUY: reward = TP - Entry
+            reward = tp - entry if tp > entry else 0
+        else:
+            # Для SELL: reward = Entry - TP
+            reward = entry - tp if tp < entry else 0
+        
+        # Если reward отрицательный или нулевой, R:R = 0
+        if reward <= 0:
+            return 0.0
+        
+        rr_ratio = reward / risk if risk > 0 else 0.0
+        
+        logger.info(f"📊 R:R calculation | Dir: {trade_direction} | "
+                   f"Entry: {entry} | TP: {tp} | SL: {sl} | "
+                   f"Risk: {risk:.5f} | Reward: {reward:.5f} | R:R: {rr_ratio:.2f}")
+        
+        return round(rr_ratio, 2)
     
     @staticmethod
     def validate_parsed_data(symbol, price_data, direction_data, metrics):
@@ -983,8 +1084,21 @@ class InstitutionalSignalParser:
         if price_data['sl'] <= 0:
             errors.append("Invalid stop loss")
         
+        if not price_data['tp_levels'] or price_data['tp_levels'][0] <= 0:
+            errors.append("Invalid take profit")
+        
         if metrics['volume'] <= 0:
             errors.append("Invalid volume")
+        
+        # Проверка направления и TP
+        if price_data['tp_levels']:
+            entry = price_data['entry']
+            tp = price_data['tp_levels'][0]
+            
+            if direction_data['trade_direction'] == 'BUY' and tp <= entry:
+                errors.append(f"BUY order has TP ({tp}) <= Entry ({entry})")
+            elif direction_data['trade_direction'] == 'SELL' and tp >= entry:
+                errors.append(f"SELL order has TP ({tp}) >= Entry ({entry})")
         
         return {
             'valid': len(errors) == 0,
@@ -1023,7 +1137,6 @@ class InstitutionalAnalytics:
             }
         except Exception as e:
             logger.error(f"❌ Pivot calculation error for {symbol}: {e}")
-            # Fallback to current price based pivots
             current = daily_close
             return {
                 "daily_pivot": round(current, digits),
@@ -1049,8 +1162,8 @@ class InstitutionalAnalytics:
     
     @staticmethod
     def calculate_probability_metrics(entry, tp_levels, sl, symbol, direction, rr_ratio):
-        """Advanced probability scoring with multi-TP support"""
-        if sl == 0 or entry == 0:
+        """Advanced probability scoring"""
+        if sl == 0 or entry == 0 or not tp_levels:
             return {
                 'probability': 60,
                 'confidence_level': "MEDIUM CONFIDENCE",
@@ -1059,8 +1172,8 @@ class InstitutionalAnalytics:
                 'risk_adjusted_return': 1.0
             }
         
-        # Multi-TP bonus
-        tp_bonus = min(10, len(tp_levels) * 3)
+        # Multi-TP bonus (теперь всегда 1 TP)
+        tp_bonus = 3  # Базовый бонус за один TP
         
         # Direction confidence adjustment
         direction_bonus = 5 if direction in ['LONG', 'SHORT'] else 0
@@ -1068,18 +1181,18 @@ class InstitutionalAnalytics:
         # Symbol volatility consideration
         volatility_factor = 1.0
         if any(x in symbol for x in ['JPY', 'CHF']):
-            volatility_factor = 1.1  # Higher volatility pairs
+            volatility_factor = 1.1
         elif 'XAU' in symbol or 'BTC' in symbol:
             volatility_factor = 1.15
         
         base_prob = 60 + (rr_ratio * 4) + tp_bonus + direction_bonus
         final_prob = min(85, max(50, base_prob * volatility_factor))
         
-        # Determine trading parameters based on probability and setup
+        # Determine trading parameters
         if final_prob >= 75:
             conf = "HIGH CONFIDENCE"
             hold = "4–10 trading days" if rr_ratio >= 4 else "2-4 trading days"
-            tf = "POSITIONAL" if len(tp_levels) >= 2 else "SWING"
+            tf = "POSITIONAL"
         elif final_prob >= 65:
             conf = "MEDIUM CONFIDENCE" 
             hold = "1-3 trading days"
@@ -1106,23 +1219,18 @@ class InstitutionalAnalytics:
         if 0 <= hour < 8:
             session = "Asian Session"
             volatility = "LOW"
-            vol_emoji = "🌤️"
         elif 8 <= hour < 13:
             session = "London Session" 
             volatility = "MEDIUM"
-            vol_emoji = "⛅"
         elif 13 <= hour < 16:
             session = "London/NY Overlap"
             volatility = "HIGH"
-            vol_emoji = "🌥️"
         elif 16 <= hour < 22:
             session = "New York Session"
             volatility = "EXTREME"
-            vol_emoji = "🌦️"
         else:
             session = "Off-Hours"
             volatility = "LOW"
-            vol_emoji = "🌤️"
         
         # Market regime mapping
         regime_map = {
@@ -1149,11 +1257,6 @@ class InstitutionalAnalytics:
             "USDSGD": "Asian Dollar Strength Dynamics",
             "USDHKD": "HKMA Peg Defense Dynamics",
             "XAGUSD": "Industrial Demand + Monetary Policy",
-            "XPTUSD": "Auto Industry Demand Outlook",
-            "XPDUSD": "Industrial & Automotive Applications",
-            "USOIL": "OPEC+ Supply Management",
-            "UKOIL": "Brent-WTI Spread Dynamics",
-            "NGAS": "Weather Patterns + Storage Levels",
         }
         
         regime = regime_map.get(symbol, "")
@@ -1161,7 +1264,6 @@ class InstitutionalAnalytics:
         return {
             'current_session': session,
             'volatility_outlook': volatility,
-            'vol_emoji': vol_emoji,
             'market_regime': regime
         }
 
@@ -1212,7 +1314,6 @@ class EconomicCalendarService:
             from_date = datetime.now().strftime('%Y-%m-%d')
             to_date = (datetime.now() + timedelta(days=days)).strftime('%Y-%m-%d')
             
-            # Correct FMP API parameter format with &apikey=
             url = f"{base_url}?from={from_date}&to={to_date}&apikey={EconomicCalendarService.FMP_API_KEY}"
             
             logger.info(f"🔍 Fetching calendar data from FMP API for {symbol}")
@@ -1275,11 +1376,6 @@ class EconomicCalendarService:
             'USDSGD': ['USD', 'SGD', 'SINGAPORE'],
             'USDHKD': ['USD', 'HKD', 'HONG KONG'],
             'XAGUSD': ['XAG', 'SILVER', 'USD'],
-            'XPTUSD': ['XPT', 'PLATINUM', 'USD'],
-            'XPDUSD': ['XPD', 'PALLADIUM', 'USD'],
-            'USOIL': ['OIL', 'CRUDE', 'ENERGY', 'INVENTORIES'],
-            'UKOIL': ['OIL', 'BRENT', 'ENERGY', 'INVENTORIES'],
-            'NGAS': ['GAS', 'NATURAL', 'ENERGY', 'INVENTORIES'],
         }
         
         relevant_currencies = currency_map.get(symbol, [symbol[:3], symbol[3:6]])
@@ -1386,7 +1482,7 @@ class InstitutionalSignalFormatter:
     
     @staticmethod
     def format_signal(parsed_data):
-        """Format signal in exact institutional format"""
+        """Format signal in exact institutional format - ОДИН TP!"""
         try:
             symbol = parsed_data['symbol']
             asset = get_asset_info(symbol)
@@ -1403,16 +1499,17 @@ class InstitutionalSignalFormatter:
             order_type = parsed_data['order_type']
             rr_ratio = parsed_data['rr_ratio']
             probability = parsed_data.get('probability', 50)
+            trade_direction = parsed_data.get('trade_direction', 'BUY')
             
             # Get currency flag
             currency_flag = CURRENCY_FLAGS.get(symbol, symbol)
             
-            # Build TP section dynamically based on TP levels count
+            # Build TP section - ТОЛЬКО ОДИН TP!
             tp_section = InstitutionalSignalFormatter._build_tp_section(
-                entry, tp_levels, pip, digits
+                entry, tp_levels, pip, digits, trade_direction
             )
             
-            # Calculate SL pips (without minus sign)
+            # Calculate SL pips
             sl_pips = int(round(abs(entry - sl) / pip))
             
             # Get professional analytics
@@ -1453,7 +1550,7 @@ class InstitutionalSignalFormatter:
 ▪️ Size  {volume:.2f} lots
 ▪️ Risk  ${risk:.2f}
 ▪️ Profit ${profit_potential:.2f}
-▪️ R:R  {rr_ratio}:1
+▪️ R:R  {rr_ratio:.2f}:1
 ▪️ Risk Level {risk_assessment['emoji']} {risk_assessment['level']}
 ▪️ recommendation: Risk ≤5% of deposit
 
@@ -1490,25 +1587,22 @@ class InstitutionalSignalFormatter:
             return f"Error formatting institutional signal: {str(e)}"
     
     @staticmethod
-    def _build_tp_section(entry, tp_levels, pip, digits):
-        """Build dynamic TP section based on number of TP levels"""
+    def _build_tp_section(entry, tp_levels, pip, digits, trade_direction):
+        """Build dynamic TP section - ТОЛЬКО ОДИН TP!"""
         if not tp_levels:
             return ""
         
-        tp_section = ""
-        tp_count = len(tp_levels)
+        # Только первый TP
+        tp = tp_levels[0]
         
-        if tp_count == 1:
-            # Single TP - show as "TP" without number
-            tp = tp_levels[0]
-            pips = int(round(abs(tp - entry) / pip))
-            tp_section = f"▪️ TP  <code>{tp:.{digits}f}</code> ({pips} pips)\n"
+        # Calculate pips - правильно для направления
+        if trade_direction == 'BUY':
+            pips = int(round((tp - entry) / pip))
         else:
-            # Multiple TPs - show as TP1, TP2, TP3
-            for i, tp in enumerate(tp_levels):
-                pips = int(round(abs(tp - entry) / pip))
-                tp_label = f"TP{i+1}"
-                tp_section += f"▪️ {tp_label}  <code>{tp:.{digits}f}</code> ({pips} pips)\n"
+            pips = int(round((entry - tp) / pip))
+        
+        # Всегда показываем как "TP" (без номера)
+        tp_section = f"▪️ TP  <code>{tp:.{digits}f}</code> ({pips} pips)\n"
         
         return tp_section
 
@@ -1527,11 +1621,11 @@ def institutional_webhook():
         return jsonify({
             "status": "active",
             "service": "FXWave Institutional Signals",
-            "version": "4.0",
+            "version": "4.1",
             "timestamp": datetime.utcnow().isoformat() + 'Z',
             "institutional_grade": True,
             "fbs_calculations": "ACTIVE",
-            "display_volume_support": "ENABLED"
+            "single_tp_mode": "ENABLED"
         }), 200
     
     try:
@@ -1559,10 +1653,11 @@ def institutional_webhook():
             formatted_signal = InstitutionalSignalFormatter.format_signal(parsed_data)
             
             logger.info(f"✅ Institutional signal parsed: {parsed_data['symbol']} | "
-                       f"TP Levels: {len(parsed_data['tp_levels'])} | Order Type: {parsed_data['order_type']} | "
+                       f"Trade Direction: {parsed_data['trade_direction']} | "
+                       f"TP Levels: {len(parsed_data['tp_levels'])} | "
                        f"Exact Profit Potential: ${parsed_data['profit_potential']:.2f} | "
                        f"Exact Risk: ${parsed_data['real_risk']:.2f} | "
-                       f"Probability: {parsed_data.get('probability', 50)}%")
+                       f"R:R: {parsed_data['rr_ratio']:.2f}")
             
             # Deliver to Telegram
             result = telegram_bot.send_message_safe(formatted_signal)
@@ -1574,6 +1669,7 @@ def institutional_webhook():
                     "message_id": result['message_id'],
                     "symbol": parsed_data['symbol'],
                     "direction": parsed_data['direction'],
+                    "trade_direction": parsed_data['trade_direction'],
                     "order_type": parsed_data['order_type'],
                     "tp_levels_count": len(parsed_data['tp_levels']),
                     "real_volume": parsed_data['real_volume'],
@@ -1584,6 +1680,7 @@ def institutional_webhook():
                     "mode": "institutional_text",
                     "calculation_method": "FBS_PRECISE",
                     "display_volume_enabled": True,
+                    "single_tp_mode": True,
                     "timestamp": datetime.utcnow().isoformat() + 'Z'
                 }), 200
             else:
@@ -1619,6 +1716,7 @@ def institutional_webhook():
                 "message_id": result['message_id'],
                 "symbol": parsed_data['symbol'],
                 "direction": parsed_data['direction'],
+                "trade_direction": parsed_data['trade_direction'],
                 "order_type": parsed_data['order_type'],
                 "tp_levels_count": len(parsed_data['tp_levels']),
                 "real_volume": parsed_data['real_volume'],
@@ -1628,6 +1726,7 @@ def institutional_webhook():
                 "probability": parsed_data.get('probability', 50),
                 "calculation_method": "FBS_PRECISE",
                 "display_volume_enabled": True,
+                "single_tp_mode": True,
                 "timestamp": datetime.utcnow().isoformat() + 'Z'
             }), 200
         else:
@@ -1650,7 +1749,7 @@ def health_check():
     health_status = {
         "status": "healthy",
         "service": "FXWave Institutional Signals Bridge",
-        "version": "4.0",
+        "version": "4.1",
         "timestamp": datetime.utcnow().isoformat() + 'Z',
         "components": {
             "telegram_bot": "operational" if telegram_bot.bot else "degraded",
@@ -1667,8 +1766,10 @@ def health_check():
         },
         "features": {
             "display_volume_support": "enabled",
+            "single_tp_mode": "enabled",
             "confidence_emojis": "implemented",
-            "volatility_emojis": "implemented"
+            "volatility_emojis": "implemented",
+            "direction_validation": "enabled"
         }
     }
     
@@ -1678,20 +1779,20 @@ def health_check():
 def home():
     """Root endpoint with service information"""
     return jsonify({
-        "message": "FXWave Institutional Signals Bridge v4.0",
+        "message": "FXWave Institutional Signals Bridge v4.1",
         "status": "operational",
-        "version": "4.0",
+        "version": "4.1",
         "timestamp": datetime.utcnow().isoformat() + 'Z',
         "features": [
             "FBS-Precise Profit/Risk Calculations",
-            "Multi-TP Support (1-3 levels)",
+            "Single TP Mode (MQL5 Grouping)",
+            "Direction Validation & Correction",
             "Institutional Grade Analytics",
             "Economic Calendar Integration",
             "Professional Signal Formatting",
-            "Enhanced Security & Validation",
-            "Display Volume Support",
             "Dynamic Confidence Emojis",
-            "Volatility Level Emojis"
+            "Volatility Level Emojis",
+            "Enhanced Security & Validation"
         ]
     }), 200
 
@@ -1699,10 +1800,11 @@ def home():
 # APPLICATION STARTUP
 # =============================================================================
 if __name__ == '__main__':
-    logger.info("🚀 Starting FXWave Institutional Signals Bridge v4.0")
+    logger.info("🚀 Starting FXWave Institutional Signals Bridge v4.1")
     logger.info("✅ Enhanced Institutional Analytics: ACTIVATED")
     logger.info("✅ FBS-Precise Calculations: IMPLEMENTED")
-    logger.info("✅ Multi-TP Support (1-3 levels): ENABLED")
+    logger.info("✅ SINGLE TP MODE: ENABLED (MQL5 Grouping)")
+    logger.info("✅ Direction Validation: IMPLEMENTED")
     logger.info("✅ HTML Parsing & Formatting: OPERATIONAL")
     logger.info("✅ Order Type Detection: IMPLEMENTED")
     logger.info("✅ Real Trading Data Tracking: ACTIVE")
@@ -1723,15 +1825,43 @@ if __name__ == '__main__':
     test_risk = FBSProfitCalculator.calculate_exact_risk(
         test_symbol, 1.10000, 1.09800, 1.0, 'BUY'
     )
-    logger.info(f"🧪 FBS Calculator Test | {test_symbol} | Profit: ${test_profit:.2f} | Risk: ${test_risk:.2f}")
+    logger.info(f"🧪 FBS Calculator Test | {test_symbol} | "
+               f"Profit: ${abs(test_profit):.2f} | Risk: ${test_risk:.2f}")
     
     # Test emoji functions
     logger.info(f"🧪 Emoji Functions Test | Confidence 85%: {get_confidence_emoji(85)}")
     logger.info(f"🧪 Emoji Functions Test | Volatility HIGH: {get_volatility_emoji('HIGH')}")
     
     port = int(os.environ.get('PORT', 10000))
-    app.run(
-        host='0.0.0.0',
-        port=port,
-        debug=False
-    )
+    
+    # Определяем среду выполнения
+    is_production = os.environ.get('FLASK_ENV') == 'production' or os.environ.get('RENDER') == 'true'
+    
+    if is_production:
+        # Production сервер с Waitress
+        try:
+            from waitress import serve
+            logger.info(f"🚀 Starting PRODUCTION server with Waitress on port {port}")
+            logger.info(f"🔧 Worker threads: 4 | Max requests: 1000")
+            serve(
+                app,
+                host='0.0.0.0',
+                port=port,
+                threads=4,
+                connection_limit=1000,
+                channel_timeout=60
+            )
+        except ImportError:
+            logger.error("❌ Waitress not installed! Using development server as fallback")
+            logger.warning("⚠️ Add 'waitress' to requirements.txt for production use")
+            app.run(host='0.0.0.0', port=port, debug=False)
+    else:
+        # Development сервер Flask
+        logger.info(f"🚀 Starting DEVELOPMENT server on port {port}")
+        logger.warning("⚠️ WARNING: Development server is not suitable for production!")
+        app.run(
+            host='0.0.0.0',
+            port=port,
+            debug=False,
+            threaded=True
+        )
