@@ -1,12 +1,32 @@
-FROM python:3.9-slim
+# Dockerfile
+FROM python:3.11-slim
 
+# Устанавливаем системные зависимости
+RUN apt-get update && apt-get install -y \
+    gcc \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Создаем директорию приложения
 WORKDIR /app
 
+# Копируем зависимости
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
 
+# Обновляем pip и устанавливаем зависимости
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Копируем исходный код
 COPY . .
 
-EXPOSE 5000
+# Создаем пользователя без привилегий для безопасности
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+USER appuser
 
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "4", "app:app"]
+# Запускаем приложение
+ENV FLASK_ENV=production
+ENV PORT=10000
+EXPOSE 10000
+
+CMD ["python", "app.py"]
