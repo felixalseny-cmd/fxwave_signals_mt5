@@ -657,6 +657,42 @@ SESSION_FLAGS = {
     "Off-Hours": "🌙"
 }
 
+# =============================================================================
+# ЭМОДЗИ ФУНКЦИИ ДЛЯ ВОЛАТИЛЬНОСТИ И УВЕРЕННОСТИ (Исправление №3)
+# =============================================================================
+
+def get_confidence_emoji(probability):
+    """Возвращает эмодзи луны в зависимости от вероятности"""
+    if probability >= 90:
+        return "🌕"  # Полная луна
+    elif probability >= 80:
+        return "🌔"  # Растущая луна
+    elif probability >= 70:
+        return "🌓"  # Первая четверть
+    elif probability >= 60:
+        return "🌗"  # Последняя четверть
+    elif probability >= 50:
+        return "🌖"  # Убывающая луна
+    elif probability >= 40:
+        return "🌒"  # Молодая луна
+    else:
+        return "🌑"  # Новая луна
+
+def get_volatility_emoji(volatility_level):
+    """Возвращает эмодзи погоды в зависимости от уровня волатильности"""
+    volatility_level = volatility_level.upper()
+    
+    if volatility_level == "LOW":
+        return "🌤️"   # Слегка облачно
+    elif volatility_level == "MEDIUM":
+        return "⛅"   # Переменная облачность
+    elif volatility_level == "HIGH":
+        return "🌥️"   # Облачно
+    elif volatility_level == "EXTREME":
+        return "🌦️"   # Дождь с солнцем
+    else:
+        return "🌧️"   # Дождь (по умолчанию)
+
 def get_asset_info(symbol):
     """Get comprehensive asset configuration with fallback"""
     asset = ASSET_CONFIG.get(symbol, {"digits": 5, "pip": 0.0001, "tick_value_adj": 1.0, "asset_class": "Forex"})
@@ -730,6 +766,13 @@ class InstitutionalSignalParser:
                 logger.error(f"❌ Data validation failed: {validation_result['error']}")
                 return None
             
+            # Расчет вероятности для эмодзи уверенности
+            rr_ratio = InstitutionalSignalParser.calculate_rr_ratio(
+                price_data['entry'], price_data['tp_levels'], price_data['sl']
+            )
+            probability = 50 + (rr_ratio - 1) * 10 if rr_ratio > 0 else 50
+            probability = max(5, min(95, probability))  # Ограничение 5-95%
+            
             parsed_data = {
                 'symbol': symbol,
                 'direction': direction_data['direction'],
@@ -743,9 +786,8 @@ class InstitutionalSignalParser:
                 'real_volume': metrics['volume'],
                 'real_risk': real_risk,
                 'profit_potential': profit_potential,
-                'rr_ratio': InstitutionalSignalParser.calculate_rr_ratio(
-                    price_data['entry'], price_data['tp_levels'], price_data['sl']
-                ),
+                'rr_ratio': rr_ratio,
+                'probability': probability,
                 'daily_high': daily_data['high'],
                 'daily_low': daily_data['low'],
                 'daily_close': daily_data['close'],
@@ -887,7 +929,7 @@ class InstitutionalSignalParser:
     @staticmethod
     def extract_metrics(clean_text):
         """Extract trading metrics"""
-        volume = 0.1  # Default
+        volume = 1.08  # Default теперь 1.08 (DisplayVolume)
         risk = 100.0  # Default
         
         # Extract volume
@@ -1006,7 +1048,7 @@ class InstitutionalAnalytics:
             return {'level': 'EXTREME', 'emoji': '🔴', 'description': 'Speculative'}
     
     @staticmethod
-    def calculate_probability_metrics(entry, tp_levels, sl, symbol, direction):
+    def calculate_probability_metrics(entry, tp_levels, sl, symbol, direction, rr_ratio):
         """Advanced probability scoring with multi-TP support"""
         if sl == 0 or entry == 0:
             return {
@@ -1016,10 +1058,6 @@ class InstitutionalAnalytics:
                 'time_frame': "DAY TRADE",
                 'risk_adjusted_return': 1.0
             }
-        
-        # Calculate base probability from RR ratio
-        first_tp = tp_levels[0] if tp_levels else entry
-        rr_ratio = abs(first_tp - entry) / abs(entry - sl)
         
         # Multi-TP bonus
         tp_bonus = min(10, len(tp_levels) * 3)
@@ -1067,20 +1105,20 @@ class InstitutionalAnalytics:
         # Session analysis
         if 0 <= hour < 8:
             session = "Asian Session"
-            volatility = "LOW-MEDIUM"
+            volatility = "LOW"
             vol_emoji = "🌤️"
         elif 8 <= hour < 13:
             session = "London Session" 
-            volatility = "HIGH"
-            vol_emoji = "🌤️"
+            volatility = "MEDIUM"
+            vol_emoji = "⛅"
         elif 13 <= hour < 16:
             session = "London/NY Overlap"
-            volatility = "EXTREME"
-            vol_emoji = "🌤️"
+            volatility = "HIGH"
+            vol_emoji = "🌥️"
         elif 16 <= hour < 22:
             session = "New York Session"
-            volatility = "MEDIUM-HIGH"
-            vol_emoji = "🌤️"
+            volatility = "EXTREME"
+            vol_emoji = "🌦️"
         else:
             session = "Off-Hours"
             volatility = "LOW"
@@ -1363,6 +1401,8 @@ class InstitutionalSignalFormatter:
             risk = parsed_data['real_risk']
             profit_potential = parsed_data['profit_potential']
             order_type = parsed_data['order_type']
+            rr_ratio = parsed_data['rr_ratio']
+            probability = parsed_data.get('probability', 50)
             
             # Get currency flag
             currency_flag = CURRENCY_FLAGS.get(symbol, symbol)
@@ -1380,9 +1420,11 @@ class InstitutionalSignalFormatter:
                 symbol, parsed_data['daily_high'], parsed_data['daily_low'], parsed_data['daily_close']
             )
             risk_assessment = InstitutionalAnalytics.assess_risk_level(risk, volume)
+            
             probability_metrics = InstitutionalAnalytics.calculate_probability_metrics(
-                entry, tp_levels, sl, symbol, parsed_data['direction']
+                entry, tp_levels, sl, symbol, parsed_data['direction'], rr_ratio
             )
+            
             market_context = InstitutionalAnalytics.get_market_context(symbol, datetime.utcnow())
             
             # Get session flag
@@ -1390,6 +1432,10 @@ class InstitutionalSignalFormatter:
             
             # Get economic calendar
             calendar_events = EconomicCalendarService.get_calendar_events(symbol)
+            
+            # Get эмодзи для уверенности и волатильности
+            confidence_emoji = get_confidence_emoji(probability)
+            volatility_emoji = get_volatility_emoji(market_context['volatility_outlook'])
             
             # Build the professional signal
             signal = f"""
@@ -1407,7 +1453,7 @@ class InstitutionalSignalFormatter:
 ▪️ Size  {volume:.2f} lots
 ▪️ Risk  ${risk:.2f}
 ▪️ Profit ${profit_potential:.2f}
-▪️ R:R  {parsed_data['rr_ratio']}:1
+▪️ R:R  {rr_ratio}:1
 ▪️ Risk Level {risk_assessment['emoji']} {risk_assessment['level']}
 ▪️ recommendation: Risk ≤5% of deposit
 
@@ -1425,10 +1471,10 @@ class InstitutionalSignalFormatter:
 🌊 MARKET REGIME
 ──────────────────
 ▪️ Session {market_context['current_session']} {session_flag}
-▪️ Volatility {market_context['volatility_outlook']} {market_context['vol_emoji']}
+▪️ Volatility {market_context['volatility_outlook']} {volatility_emoji}
 ▪️ Hold Time {probability_metrics['expected_hold_time']}
 ▪️ Style {probability_metrics['time_frame']}
-▪️ Confidence {probability_metrics['confidence_level']} 🌗
+▪️ Confidence {probability_metrics['confidence_level']} {confidence_emoji}
 
 #FXWavePRO #Institutional
 <i>FXWave Institutional Desk | @fxfeelgood</i> 💎
@@ -1484,7 +1530,8 @@ def institutional_webhook():
             "version": "4.0",
             "timestamp": datetime.utcnow().isoformat() + 'Z',
             "institutional_grade": True,
-            "fbs_calculations": "ACTIVE"
+            "fbs_calculations": "ACTIVE",
+            "display_volume_support": "ENABLED"
         }), 200
     
     try:
@@ -1514,7 +1561,8 @@ def institutional_webhook():
             logger.info(f"✅ Institutional signal parsed: {parsed_data['symbol']} | "
                        f"TP Levels: {len(parsed_data['tp_levels'])} | Order Type: {parsed_data['order_type']} | "
                        f"Exact Profit Potential: ${parsed_data['profit_potential']:.2f} | "
-                       f"Exact Risk: ${parsed_data['real_risk']:.2f}")
+                       f"Exact Risk: ${parsed_data['real_risk']:.2f} | "
+                       f"Probability: {parsed_data.get('probability', 50)}%")
             
             # Deliver to Telegram
             result = telegram_bot.send_message_safe(formatted_signal)
@@ -1532,8 +1580,10 @@ def institutional_webhook():
                     "real_risk": parsed_data['real_risk'],
                     "profit_potential": parsed_data['profit_potential'],
                     "rr_ratio": parsed_data['rr_ratio'],
+                    "probability": parsed_data.get('probability', 50),
                     "mode": "institutional_text",
                     "calculation_method": "FBS_PRECISE",
+                    "display_volume_enabled": True,
                     "timestamp": datetime.utcnow().isoformat() + 'Z'
                 }), 200
             else:
@@ -1575,7 +1625,9 @@ def institutional_webhook():
                 "real_risk": parsed_data['real_risk'],
                 "profit_potential": parsed_data['profit_potential'],
                 "rr_ratio": parsed_data['rr_ratio'],
+                "probability": parsed_data.get('probability', 50),
                 "calculation_method": "FBS_PRECISE",
+                "display_volume_enabled": True,
                 "timestamp": datetime.utcnow().isoformat() + 'Z'
             }), 200
         else:
@@ -1605,12 +1657,18 @@ def health_check():
             "fbs_calculator": "active",
             "signal_parser": "active",
             "economic_calendar": "active",
-            "institutional_analytics": "active"
+            "institutional_analytics": "active",
+            "emoji_functions": "active"
         },
         "environment": {
             "symbols_configured": len(ASSET_CONFIG),
             "fbs_symbols": len(FBSSymbolSpecs.SPECS),
             "log_level": os.environ.get('LOG_LEVEL', 'INFO')
+        },
+        "features": {
+            "display_volume_support": "enabled",
+            "confidence_emojis": "implemented",
+            "volatility_emojis": "implemented"
         }
     }
     
@@ -1630,7 +1688,10 @@ def home():
             "Institutional Grade Analytics",
             "Economic Calendar Integration",
             "Professional Signal Formatting",
-            "Enhanced Security & Validation"
+            "Enhanced Security & Validation",
+            "Display Volume Support",
+            "Dynamic Confidence Emojis",
+            "Volatility Level Emojis"
         ]
     }), 200
 
@@ -1648,6 +1709,9 @@ if __name__ == '__main__':
     logger.info("✅ Professional Risk Assessment: INTEGRATED")
     logger.info("✅ Economic Calendar with Caching: CONFIGURED")
     logger.info("✅ Security Middleware: DEPLOYED")
+    logger.info("✅ Display Volume Support: ENABLED")
+    logger.info("✅ Dynamic Confidence Emojis: IMPLEMENTED")
+    logger.info("✅ Volatility Level Emojis: IMPLEMENTED")
     logger.info("📊 Institutional Assets Configured: {} symbols".format(len(ASSET_CONFIG)))
     logger.info("🎯 FBS Symbol Specifications: {} symbols".format(len(FBSSymbolSpecs.SPECS)))
     
@@ -1660,6 +1724,10 @@ if __name__ == '__main__':
         test_symbol, 1.10000, 1.09800, 1.0, 'BUY'
     )
     logger.info(f"🧪 FBS Calculator Test | {test_symbol} | Profit: ${test_profit:.2f} | Risk: ${test_risk:.2f}")
+    
+    # Test emoji functions
+    logger.info(f"🧪 Emoji Functions Test | Confidence 85%: {get_confidence_emoji(85)}")
+    logger.info(f"🧪 Emoji Functions Test | Volatility HIGH: {get_volatility_emoji('HIGH')}")
     
     port = int(os.environ.get('PORT', 10000))
     app.run(
